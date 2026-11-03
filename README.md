@@ -89,12 +89,3 @@ Chats update by polling (open chat every 4s, chat list every 10s). That's simple
 1. Run `server.py` under systemd with `SECURE_COOKIES=1` (and optionally `HOST`/`PORT`).
 2. Nginx terminates HTTPS and `proxy_pass`es to `127.0.0.1:8000`.
 3. Back up `data/devotion.db` (e.g. nightly `sqlite3 devotion.db ".backup ..."`).
-
-## Not in the MVP yet (good next steps)
-
-- Login rate limiting (do it in Nginx with `limit_req`, or a small counter table)
-- Password reset (needs email)
-- Push/email notifications for new messages
-- "I prayed for this" reactions on prayers and devotions
-- Group admin tools (rename a group)
-- Expired-session cleanup job
