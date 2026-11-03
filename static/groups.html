@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Groups · Daily Bread</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <main class="stack">
+    <h1>Groups</h1>
+    <div class="grid-2">
+      <form class="card stack" id="create-form">
+        <h3>Start a group</h3>
+        <input id="group-name" maxlength="80" placeholder="e.g. Tuesday Bible Study" required>
+        <button class="primary" type="submit">Create</button>
+        <div class="error" id="create-error"></div>
+      </form>
+      <form class="card stack" id="join-form">
+        <h3>Join with an invite code</h3>
+        <input id="join-code" maxlength="40" placeholder="Paste the code someone sent you" required>
+        <button class="primary" type="submit">Join</button>
+        <div class="error" id="join-error"></div>
+      </form>
+    </div>
+    <div id="groups" class="stack"></div>
+  </main>
+  <script src="/static/common.js"></script>
+  <script src="/static/groups.js"></script>
+</body>
+</html>
