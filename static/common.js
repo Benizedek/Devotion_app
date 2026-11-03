@@ -93,21 +93,12 @@ async function refreshUnread(conversations) {
   badge.classList.toggle("hidden", n === 0);
 }
 
-// Reusable "send to a chat" control. onSend receives the chosen conversation id.
-async function chatPicker(onSend, buttonLabel = "Send") {
-  const convs = await api("GET", "/api/conversations");
-  if (!convs.length) {
-    return el("p", { class: "muted" }, "To share, first ", el("a", { href: "/groups" }, "start a chat or group"), ".");
-  }
-  const select = el("select", { "aria-label": "Choose a chat" },
-    el("option", { value: "" }, "Choose a chat…"),
-    convs.map((c) => el("option", { value: c.id }, c.is_group ? `${c.title} (group)` : c.title)));
-  const err = el("div", { class: "error" });
-  const btn = el("button", { class: "primary", onclick: async () => {
-    err.textContent = "";
-    if (!select.value) { err.textContent = "Pick a chat first."; return; }
-    try { await onSend(Number(select.value)); select.value = ""; toast("Sent"); }
-    catch (e) { err.textContent = e.message; }
-  } }, buttonLabel);
-  return el("div", {}, el("div", { class: "row" }, select, btn), err);
+const DEVOTION_SECTIONS = [["observations", "Observations"], ["interpretation", "Interpretation"], ["application", "Application"]];
+
+// Read-only devotion: Scripture as the heading, then whichever O/I/A sections were written.
+function devotionView(d) {
+  return el("div", { class: "devotion-view" },
+    d.scripture ? el("h3", {}, d.scripture) : null,
+    DEVOTION_SECTIONS.filter(([key]) => d[key]).map(([key, label]) =>
+      el("div", { class: "oia-block" }, el("h4", {}, label), el("p", {}, d[key]))));
 }

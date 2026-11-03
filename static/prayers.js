@@ -14,7 +14,8 @@ function renderMine(prayers) {
   }
   list.replaceChildren(...prayers.map((p) => {
     const li = el("li", { class: p.answered_at ? "answered" : "" });
-    const view = () => li.replaceChildren(
+    // Wrapped in el() because the browser's replaceChildren turns a null child into the text "null".
+    const view = () => li.replaceChildren(el("div", { class: "stack-tight" },
       el("div", { class: "row" }, el("span", { class: "prayer-title" }, p.title), answeredBadge(p)),
       p.body ? el("div", { class: "muted" }, p.body) : null,
       el("div", { class: "row" },
@@ -23,7 +24,7 @@ function renderMine(prayers) {
         el("button", { onclick: edit }, "Edit"),
         el("button", { class: "danger", onclick: async () => {
           if (confirm("Remove this prayer from your list?")) renderMine(await api("DELETE", `/api/prayers/${p.id}`));
-        } }, "Remove")));
+        } }, "Remove"))));
     const edit = () => {
       const t = el("input", { value: p.title, maxlength: 200 });
       const b = el("input", { value: p.body, maxlength: 5000, placeholder: "Details" });
@@ -50,22 +51,13 @@ $("add-form").addEventListener("submit", async (e) => {
   } catch (err) { $("add-error").textContent = err.message; }
 });
 
-// ---------- who my list is shared with ----------
-function renderShares(shares) {
-  $("share-list").replaceChildren(
-    shares.length ? "" : el("span", { class: "muted" }, "Your list is private."),
-    ...shares.map((s) => el("span", { class: "pill" }, s.label,
-      el("button", { "aria-label": `Stop sharing with ${s.label}`,
-        onclick: async () => renderShares(await api("DELETE", `/api/prayer-shares/${s.id}`)) }, "×"))));
-}
-
 // ---------- lists shared with me (live) ----------
 async function loadShared() {
   const lists = await api("GET", "/api/prayers/shared");
   $("refreshed").textContent = `Updated ${new Date().toLocaleTimeString()} · refreshes automatically`;
   if (!lists.length) {
     $("shared-lists").replaceChildren(el("p", { class: "muted" },
-      "No one has shared a prayer list with you yet. When someone shares theirs in one of your chats, it shows up here."));
+      "No one is sharing a prayer list with you yet. When someone in one of your chats turns on sharing, their list shows up here."));
     return;
   }
   $("shared-lists").replaceChildren(...lists.map((l) => el("div", {},
@@ -79,11 +71,7 @@ async function loadShared() {
 
 (async () => {
   await initPage();
-  const [mine, shares] = await Promise.all([api("GET", "/api/prayers"), api("GET", "/api/prayer-shares")]);
-  renderMine(mine);
-  renderShares(shares);
-  $("share-control").append(await chatPicker(async (convId) =>
-    renderShares(await api("POST", "/api/prayer-shares", { conversation_id: convId })), "Share list"));
+  renderMine(await api("GET", "/api/prayers"));
   await loadShared();
   setInterval(() => { if (!document.hidden) loadShared(); }, REFRESH_MS);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) loadShared(); });

@@ -32,13 +32,15 @@ browser ──fetch JSON──▶ server.py ──▶ api.py ──▶ db.py (SQ
 ## Data model
 
 - **users**, **sessions**
-- **conversations** + **conversation_members**: chats. `is_group = 0` is a 1-on-1 chat (reused, never duplicated); groups can add people and be left. `last_read_id` drives unread badges.
-- **messages**: `kind` is `text`, `devotion`, `prayer_list` or `system` ("Ben added Grace"). A devotion message points at the live devotion, so edits show up in the chat, and deleting the devotion leaves a "deleted" placeholder.
-- **devotions**: one per user per day, with Scripture + Observations / Interpretation / Application. `entry_date` is the writer's *local* date, so travelling doesn't shift days.
+- **conversations** + **conversation_members**: chats. `is_group = 0` is a 1-on-1 chat (reused, never duplicated). In groups anyone can add people; only the creator (`created_by`) can remove them, and the role passes on if they leave. `last_read_id` drives unread badges.
+- **conversation_members.share_mine**: the per-chat Settings toggle. When on, that chat sees your prayer list live and each day's devotion is posted there on its first save. When off, your devotion cards in that chat are hidden and your prayers disappear from their "Praying for others".
+- **messages**: `kind` is `text`, `devotion` or `system` ("Ben added Grace"). A devotion message points at the live devotion, so edits show up in the chat.
+- **devotions**: one per user per day, with Scripture + Observations / Interpretation / Application. Only *today's* devotion can be saved or deleted (checked in `require_editable`); past days are read-only. `entry_date` is the writer's *local* date, so travelling doesn't shift days.
 - **prayers**: `answered_at` NULL means still praying.
-- **prayer_list_shares**: your *whole list* shared into a chat; everyone in that chat reads the live list.
 
-Access is checked on every request: you only see chats you're a member of. Leave a group and its messages and shared prayer lists disappear for you.
+Access is checked on every request: you only see chats you're a member of.
+
+**Upgrading the database:** `db.migrate()` upgrades an existing `data/devotion.db` in place and records the version in `PRAGMA user_version`. When you change the schema, add a step there instead of deleting the data folder.
 
 Chats update by polling (open chat every 4s, chat list every 10s). That's simple and fine for small groups; WebSockets would be the upgrade later.
 

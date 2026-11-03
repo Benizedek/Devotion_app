@@ -40,7 +40,7 @@ function renderCalendar() {
 }
 
 async function selectDay(iso) {
-  if (state.dirty && !confirm("You have unsaved changes. Leave this day anyway?")) return;
+  if (state.dirty && !confirm("You have unsaved changes to today's devotion. Leave anyway?")) return;
   state.selected = iso;
   renderCalendar();
   await loadDevotion();
@@ -49,44 +49,58 @@ async function selectDay(iso) {
 
 async function loadDevotion() {
   const d = await api("GET", `/api/devotions/${state.selected}`);
-  $("editor-date").textContent = prettyDate(state.selected);
-  for (const f of FIELDS) $(f).value = d?.[f] ?? "";
-  $("editor-error").textContent = "";
+  const isToday = state.selected === today;
+  $("editor-date").textContent = isToday ? `Today · ${prettyDate(today)}` : prettyDate(state.selected);
+  $("today-btn").classList.toggle("hidden", isToday);
+  $("edit-view").classList.toggle("hidden", !isToday);
+  $("read-view").classList.toggle("hidden", isToday);
   state.dirty = false;
-  renderSaved(d);
+
+  if (isToday) {
+    for (const f of FIELDS) $(f).value = d?.[f] ?? "";
+    $("editor-error").textContent = "";
+    renderStatus(d);
+  } else {
+    $("editor-status").textContent = d ? "Read-only · past devotions can't be edited" : "";
+    $("read-view").replaceChildren(d ? devotionView(d) : el("p", { class: "muted" }, "No devotion written this day."));
+  }
 }
 
-function renderSaved(d) {
+function renderStatus(d) {
   $("editor-status").textContent = d ? `Saved · last edited ${utcDate(d.updated_at).toLocaleString()}` : "Not written yet";
   $("delete").classList.toggle("hidden", !d);
-  $("share-section").classList.toggle("hidden", !d);
-  if (!d) return;
-  $("sent-list").replaceChildren(
-    d.sent_to.length ? "Sent to:" : el("span", { class: "muted" }, "Only you can see this devotion."),
-    ...d.sent_to.map((s) => el("span", { class: "pill" }, s.label,
-      el("button", { "aria-label": `Unsend from ${s.label}`, title: "Unsend", onclick: async () => {
-        await api("DELETE", `/api/messages/${s.message_id}`);
-        await loadDevotion();
-      } }, "×"))));
+}
+
+async function renderVisibleTo() {
+  const chats = await api("GET", "/api/devotions/visible-to");
+  $("visible-to").replaceChildren(chats.length
+    ? `Shared with: ${chats.map((c) => c.title).join(", ")}. Change this in each chat's Settings.`
+    : "Only you can see this. To share, turn on sharing in a chat's Settings.");
 }
 
 $("save").addEventListener("click", async () => {
   $("editor-error").textContent = "";
   try {
     const body = Object.fromEntries(FIELDS.map((f) => [f, $(f).value]));
-    const d = await api("PUT", `/api/devotions/${state.selected}`, body);
+    const d = await api("PUT", `/api/devotions/${today}`, { ...body, today });
     state.dirty = false;
-    renderSaved(d);
+    renderStatus(d);
     toast("Saved");
     await loadMonth();
   } catch (e) { $("editor-error").textContent = e.message; }
 });
 
 $("delete").addEventListener("click", async () => {
-  if (!confirm("Delete this devotion? It will also disappear from any chats you sent it to.")) return;
-  await api("DELETE", `/api/devotions/${state.selected}`);
+  if (!confirm("Delete today's devotion? It will also disappear from your chats.")) return;
+  await api("DELETE", `/api/devotions/${today}`, { today });
   await Promise.all([loadDevotion(), loadMonth()]);
   toast("Deleted");
+});
+
+$("today-btn").addEventListener("click", () => {
+  state.year = new Date().getFullYear();
+  state.month = new Date().getMonth();
+  loadMonth().then(() => selectDay(today));
 });
 
 for (const f of FIELDS) $(f).addEventListener("input", () => { state.dirty = true; });
@@ -101,8 +115,5 @@ $("next").addEventListener("click", () => {
 
 (async () => {
   await initPage();
-  $("share-control").append(await chatPicker(async (convId) => {
-    renderSaved(await api("POST", `/api/devotions/${state.selected}/send`, { conversation_id: convId }));
-  }));
-  await Promise.all([loadMonth(), loadDevotion()]);
+  await Promise.all([loadMonth(), loadDevotion(), renderVisibleTo()]);
 })();

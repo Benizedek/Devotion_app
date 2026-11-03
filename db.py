@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS conversation_members (
     conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     last_read_id    INTEGER NOT NULL DEFAULT 0,   -- highest message id this member has seen
+    share_mine      INTEGER NOT NULL DEFAULT 0,   -- 1 = this chat can see my devotions + prayer list
     joined_at       TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (conversation_id, user_id)
 );
@@ -49,8 +50,9 @@ CREATE TABLE IF NOT EXISTS devotions (
     UNIQUE (user_id, entry_date)
 );
 
--- kind: 'text' | 'devotion' | 'prayer_list' | 'system'
+-- kind: 'text' | 'devotion' | 'system'
 -- A devotion message points at the live devotion, so later edits show up in the chat.
+-- It is only shown while the author still has share_mine on for that chat.
 CREATE TABLE IF NOT EXISTS messages (
     id              INTEGER PRIMARY KEY,
     conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
@@ -71,16 +73,32 @@ CREATE TABLE IF NOT EXISTS prayers (
     created_at  TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
-
--- The whole list is shared into a chat; members read the live prayers table.
-CREATE TABLE IF NOT EXISTS prayer_list_shares (
-    id              INTEGER PRIMARY KEY,
-    owner_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE (owner_id, conversation_id)
-);
 """
+
+SCHEMA_VERSION = 3
+
+
+def migrate(conn):
+    """Upgrade an existing database in place. PRAGMA user_version records which version it's at.
+
+    Version 2 (chats) never set user_version, so 0 means "version 2, or brand new".
+    """
+    version = conn.execute("PRAGMA user_version").fetchone()[0]
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+
+    if version < 3 and "conversation_members" in tables:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(conversation_members)")}
+        if "share_mine" not in cols:
+            conn.execute("ALTER TABLE conversation_members ADD COLUMN share_mine INTEGER NOT NULL DEFAULT 0")
+        if "prayer_list_shares" in tables:
+            # Anyone who had shared their prayer list into a chat keeps sharing there.
+            conn.execute("""UPDATE conversation_members SET share_mine = 1
+                            WHERE (conversation_id, user_id) IN
+                                  (SELECT conversation_id, owner_id FROM prayer_list_shares)""")
+            conn.execute("DROP TABLE prayer_list_shares")
+        conn.execute("DELETE FROM messages WHERE kind = 'prayer_list'")
+
+    conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
 
 def connect():
@@ -99,4 +117,5 @@ def init():
                 "data/devotion.db was made by an older version of this app.\n"
                 "Delete the data folder and start again (this erases your test accounts).")
         conn.execute("PRAGMA journal_mode = WAL")
+        migrate(conn)
         conn.executescript(SCHEMA)

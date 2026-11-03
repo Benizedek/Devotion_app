@@ -26,9 +26,13 @@
               <h2 id="thread-title"></h2>
               <div class="muted small" id="thread-sub"></div>
             </div>
-            <button id="info-btn">Info</button>
+            <button id="settings-btn" aria-expanded="false" aria-controls="settings">⚙ Settings</button>
           </header>
-          <div id="info" class="thread-info hidden"></div>
+          <div id="settings" class="thread-info hidden"></div>
+          <div id="share-banner" class="share-banner hidden">
+            You're not sharing your devotions or prayer list here.
+            <button class="link" id="banner-settings">Open settings</button>
+          </div>
           <div id="messages" class="messages" aria-live="polite"></div>
           <form id="composer" class="composer">
             <input id="msg-input" placeholder="Message…" maxlength="4000" autocomplete="off" aria-label="Message">

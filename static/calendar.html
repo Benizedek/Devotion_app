@@ -18,38 +18,44 @@
     </section>
 
     <section class="card stack" id="editor">
-      <div>
-        <h2 id="editor-date"></h2>
-        <div class="muted" id="editor-status"></div>
+      <div class="card-head">
+        <div>
+          <h2 id="editor-date"></h2>
+          <div class="muted" id="editor-status"></div>
+        </div>
+        <button id="today-btn" class="hidden">Go to today</button>
       </div>
-      <div>
-        <label for="scripture">Scripture</label>
-        <input id="scripture" maxlength="300" placeholder="e.g. Psalm 23:1–3">
-      </div>
-      <div class="oia">
-        <label for="observations">Observations</label>
-        <p class="hint">What does the passage say? Who, what, where, when?</p>
-        <textarea id="observations"></textarea>
-      </div>
-      <div class="oia">
-        <label for="interpretation">Interpretation</label>
-        <p class="hint">What does it mean? What does it show about God?</p>
-        <textarea id="interpretation"></textarea>
-      </div>
-      <div class="oia">
-        <label for="application">Application</label>
-        <p class="hint">How will I live this out today?</p>
-        <textarea id="application"></textarea>
-      </div>
-      <div class="error" id="editor-error"></div>
-      <div class="row">
-        <button class="primary" id="save">Save</button>
-        <button class="danger hidden" id="delete">Delete</button>
-      </div>
-      <div id="share-section" class="hidden stack">
-        <h3>Share to a chat</h3>
-        <div class="row" id="sent-list"></div>
-        <div id="share-control"></div>
+
+      <!-- Past days: read-only -->
+      <div id="read-view" class="hidden"></div>
+
+      <!-- Today: editable -->
+      <div id="edit-view" class="stack hidden">
+        <div>
+          <label for="scripture">Scripture</label>
+          <input id="scripture" maxlength="300" placeholder="e.g. Psalm 23:1–3">
+        </div>
+        <div class="oia">
+          <label for="observations">Observations</label>
+          <p class="hint">What does the passage say? Who, what, where, when?</p>
+          <textarea id="observations"></textarea>
+        </div>
+        <div class="oia">
+          <label for="interpretation">Interpretation</label>
+          <p class="hint">What does it mean? What does it show about God?</p>
+          <textarea id="interpretation"></textarea>
+        </div>
+        <div class="oia">
+          <label for="application">Application</label>
+          <p class="hint">How will I live this out today?</p>
+          <textarea id="application"></textarea>
+        </div>
+        <div class="error" id="editor-error"></div>
+        <div class="row">
+          <button class="primary" id="save">Save</button>
+          <button class="danger hidden" id="delete">Delete</button>
+        </div>
+        <p class="muted small" id="visible-to"></p>
       </div>
     </section>
   </main>

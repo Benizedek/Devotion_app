@@ -1,7 +1,6 @@
 const $ = (id) => document.getElementById(id);
 const THREAD_POLL_MS = 4_000;    // how often the open chat checks for new messages
 const LIST_POLL_MS = 10_000;     // how often the chat list refreshes
-const SECTIONS = [["observations", "Observations"], ["interpretation", "Interpretation"], ["application", "Application"]];
 
 const state = { me: null, convs: [], current: null, conv: null, lastId: 0, loading: false };
 
@@ -34,7 +33,7 @@ async function openConv(id) {
   $("layout").classList.add("show-thread");
   $("thread-empty").classList.add("hidden");
   $("thread-body").classList.remove("hidden");
-  $("info").classList.add("hidden");
+  closeSettings();
   $("messages").replaceChildren();
   try {
     state.conv = await api("GET", `/api/conversations/${id}`);
@@ -43,13 +42,19 @@ async function openConv(id) {
     closeConv();
     return;
   }
-  $("thread-title").textContent = state.conv.title;
-  $("thread-sub").textContent = state.conv.is_group
-    ? `${state.conv.members.length} members`
-    : "@" + (state.conv.members.find((m) => m.id !== state.me.id)?.username ?? "");
+  renderThreadHeader();
   await loadMessages(true);
   loadConvs();          // clears the unread badge for this chat
   $("msg-input").focus();
+}
+
+function renderThreadHeader() {
+  const c = state.conv;
+  $("thread-title").textContent = c.title;
+  $("thread-sub").textContent = c.is_group
+    ? `${c.members.length} ${c.members.length === 1 ? "member" : "members"}`
+    : "@" + (c.members.find((m) => m.id !== state.me.id)?.username ?? "");
+  $("share-banner").classList.toggle("hidden", c.share_mine);
 }
 
 function closeConv() {
@@ -84,18 +89,15 @@ function renderMessage(m) {
 
   let content;
   if (m.kind === "devotion") {
-    const d = m.devotion;
-    content = d
-      ? el("div", { class: "devotion-card" },
-          el("div", { class: "muted small" }, `${m.mine ? "Your" : m.sender + "'s"} devotion · ${prettyDate(d.entry_date)}`),
-          d.scripture ? el("h3", {}, d.scripture) : null,
-          SECTIONS.filter(([key]) => d[key]).map(([key, label]) =>
-            el("div", { class: "oia-block" }, el("h4", {}, label), el("p", {}, d[key]))))
-      : el("div", { class: "bubble muted" }, "This devotion was deleted.");
-  } else if (m.kind === "prayer_list") {
-    content = el("div", { class: "bubble" },
-      m.mine ? "You shared your prayer list. " : `${m.sender} shared their prayer list. `,
-      el("a", { href: "/prayers" }, m.mine ? "Manage" : "Pray for them"));
+    if (m.devotion_status === "shown") {
+      content = el("div", { class: "devotion-card" },
+        el("div", { class: "muted small" }, `${m.mine ? "Your" : m.sender + "'s"} devotion · ${prettyDate(m.devotion.entry_date)}`),
+        devotionView(m.devotion));
+    } else {
+      content = el("div", { class: "bubble faded" }, m.devotion_status === "deleted"
+        ? "This devotion was deleted."
+        : `${m.sender} is no longer sharing devotions here.`);
+    }
   } else {
     content = el("div", { class: "bubble" }, m.body);
   }
@@ -104,7 +106,7 @@ function renderMessage(m) {
     el("div", { class: "msg-meta" },
       state.conv?.is_group && !m.mine ? `${m.sender} · ` : "",
       shortTime(m.created_at),
-      m.mine ? el("button", { class: "link unsend", onclick: async () => {
+      m.mine && m.kind === "text" ? el("button", { class: "link unsend", onclick: async () => {
         if (!confirm("Unsend this message?")) return;
         await api("DELETE", `/api/messages/${m.id}`);
         node.remove();
@@ -113,30 +115,84 @@ function renderMessage(m) {
   return node;
 }
 
-// ---------- chat info panel ----------
-function renderInfo() {
+// ---------- chat settings panel ----------
+function renderSettings() {
   const c = state.conv;
-  $("info").replaceChildren(
-    el("h3", {}, c.is_group ? "Members" : "Chat with"),
-    el("ul", { class: "list" }, c.members.map((m) =>
-      el("li", {}, m.display_name, " ", el("span", { class: "muted" }, `@${m.username}`),
-        m.id === state.me.id ? el("span", { class: "muted" }, " (you)") : null))),
-    c.is_group
-      ? el("div", { class: "row" },
-          el("a", { class: "button-link", href: `/groups?add=${c.id}` }, "+ Add people"),
-          el("button", { class: "danger", onclick: async () => {
+
+  // The sharing switch. A checkbox styled as a toggle, so keyboards and screen readers work for free.
+  const toggle = el("input", { type: "checkbox", role: "switch", id: "share-toggle", checked: c.share_mine });
+  toggle.addEventListener("change", async () => {
+    toggle.disabled = true;
+    try {
+      state.conv = await api("PATCH", `/api/conversations/${c.id}/settings`,
+        { share_mine: toggle.checked, today: localISO() });
+      renderThreadHeader();
+      renderSettings();
+      await loadMessages(true);
+      toast(state.conv.share_mine ? "Sharing turned on" : "Sharing turned off");
+    } catch (e) {
+      toggle.checked = !toggle.checked;
+      toggle.disabled = false;
+      toast(e.message);
+    }
+  });
+
+  const memberRow = (m) => el("li", { class: "person" },
+    el("div", {},
+      el("strong", {}, m.display_name), " ", el("span", { class: "muted" }, `@${m.username}`),
+      m.id === state.me.id ? el("span", { class: "muted" }, " (you)") : null,
+      el("div", { class: "row small" },
+        m.is_admin ? el("span", { class: "badge" }, "Creator") : null,
+        el("span", { class: "muted" }, m.sharing ? "Sharing devotions & prayers" : "Not sharing"))),
+    c.is_admin && m.id !== state.me.id
+      ? el("button", { class: "danger", onclick: async () => {
+          if (!confirm(`Remove ${m.display_name} from ${c.title}?`)) return;
+          try {
+            state.conv = await api("DELETE", `/api/conversations/${c.id}/members/${m.id}`);
+            renderThreadHeader();
+            renderSettings();
+            loadMessages();
+          } catch (e) { toast(e.message); }
+        } }, "Remove")
+      : null);
+
+  $("settings").replaceChildren(
+    el("div", { class: "stack" },
+      el("div", { class: "setting" },
+        el("label", { for: "share-toggle", class: "setting-label" },
+          el("strong", {}, "Share my devotions & prayer list"),
+          el("span", { class: "muted small" }, c.share_mine
+            ? "This chat sees your prayer list live, and each day's devotion is posted here when you write it."
+            : "Off: nothing of yours is shared with this chat.")),
+        el("span", { class: "switch" }, toggle, el("span", { class: "slider", "aria-hidden": "true" }))),
+      el("div", {},
+        el("div", { class: "card-head" },
+          el("h3", {}, c.is_group ? `Members (${c.members.length})` : "Chat with"),
+          c.is_group ? el("a", { class: "button-link", href: `/groups?add=${c.id}` }, "+ Add people") : null),
+        el("ul", { class: "list" }, c.members.map(memberRow))),
+      c.is_group
+        ? el("div", {}, el("button", { class: "danger", onclick: async () => {
             if (!confirm(`Leave ${c.title}? You'll stop seeing its messages and shared prayer lists.`)) return;
             await api("POST", `/api/conversations/${c.id}/leave`);
             closeConv();
           } }, "Leave group"))
-      : el("p", { class: "muted small" }, "Want more people? Start a group from the Groups tab."));
+        : el("p", { class: "muted small" }, "Want more people? Start a group from the Groups tab.")));
 }
 
-$("info-btn").addEventListener("click", () => {
-  const info = $("info");
-  if (info.classList.contains("hidden")) renderInfo();
-  info.classList.toggle("hidden");
-});
+function openSettings() {
+  renderSettings();
+  $("settings").classList.remove("hidden");
+  $("settings-btn").setAttribute("aria-expanded", "true");
+}
+
+function closeSettings() {
+  $("settings").classList.add("hidden");
+  $("settings-btn").setAttribute("aria-expanded", "false");
+}
+
+$("settings-btn").addEventListener("click", () =>
+  $("settings").classList.contains("hidden") ? openSettings() : closeSettings());
+$("banner-settings").addEventListener("click", openSettings);
 
 $("back").addEventListener("click", closeConv);
 

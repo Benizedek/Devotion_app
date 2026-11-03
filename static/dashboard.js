@@ -18,19 +18,17 @@ const $ = (id) => document.getElementById(id);
 
   // Today's devotion
   $("today-card").replaceChildren(
-    el("h2", {}, "Today's devotion"),
+    el("div", { class: "card-head" },
+      el("h2", {}, "Today's devotion"),
+      el("a", { class: devotion ? "button-link" : "button-link primary", href: "/calendar" }, devotion ? "Edit" : "Write")),
     devotion
-      ? el("div", { class: "stack" },
-          el("div", {}, el("span", { class: "badge" }, "Done"), " ", devotion.scripture || "Written today"),
-          el("a", { href: "/calendar" }, "View or edit"))
-      : el("div", { class: "stack" },
-          el("p", { class: "muted" }, "You haven't written today's devotion yet."),
-          el("a", { href: "/calendar" }, "Write today's devotion")));
+      ? devotionView(devotion)
+      : el("p", { class: "muted" }, "You haven't written today's devotion yet."));
 
   // Prayer list summary
   const active = prayers.filter((p) => !p.answered_at);
   $("prayer-card").replaceChildren(
-    el("h2", {}, "My prayer list"),
+    el("h2", {}, "My prayers"),
     prayers.length
       ? el("div", { class: "stack" },
           el("div", {}, `${active.length} still praying · ${prayers.length - active.length} answered`),
@@ -42,7 +40,7 @@ const $ = (id) => document.getElementById(id);
 
   // Recent chats
   $("chats-card").replaceChildren(
-    el("div", { class: "row spread" }, el("h2", {}, "Recent chats"), el("a", { href: "/groups" }, "+ New chat")),
+    el("div", { class: "card-head" }, el("h2", {}, "Recent chats"), el("a", { class: "button-link", href: "/groups" }, "+ New")),
     convs.length
       ? el("ul", { class: "list" }, convs.slice(0, 5).map((c) => el("li", {},
           el("a", { class: "conv-link", href: `/shared?c=${c.id}` },
@@ -50,5 +48,5 @@ const $ = (id) => document.getElementById(id);
               el("strong", {}, c.title),
               c.unread ? el("span", { class: "nav-badge" }, c.unread) : el("span", { class: "muted small" }, shortTime(c.last_at))),
             el("div", { class: `conv-preview${c.unread ? " unread" : ""}` }, c.preview || "No messages yet")))))
-      : el("p", { class: "muted" }, "No chats yet. Start one with a friend or your small group to share devotions and prayers."));
+      : el("p", { class: "muted" }, "No chats yet. Start one with a friend or your small group."));
 })();
