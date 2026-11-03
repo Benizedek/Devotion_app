@@ -20,7 +20,7 @@ const $ = (id) => document.getElementById(id);
   $("today-card").replaceChildren(
     el("div", { class: "card-head" },
       el("h2", {}, "Today's devotion"),
-      el("a", { class: devotion ? "button-link" : "button-link primary", href: "/calendar" }, devotion ? "Edit" : "Write")),
+      el("a", { class: devotion ? "button-link" : "button-link primary", href: devotion ? "/calendar?edit=1" : "/calendar" }, devotion ? "Edit" : "Write")),
     devotion
       ? devotionView(devotion)
       : el("p", { class: "muted" }, "You haven't written today's devotion yet."));
@@ -43,7 +43,7 @@ const $ = (id) => document.getElementById(id);
     el("div", { class: "card-head" }, el("h2", {}, "Recent chats"), el("a", { class: "button-link", href: "/groups" }, "+ New")),
     convs.length
       ? el("ul", { class: "list" }, convs.slice(0, 5).map((c) => el("li", {},
-          el("a", { class: "conv-link", href: `/shared?c=${c.id}` },
+          el("a", { class: "conv-link", href: `/chat?c=${c.id}` },
             el("div", { class: "conv-top" },
               el("strong", {}, c.title),
               c.unread ? el("span", { class: "nav-badge" }, c.unread) : el("span", { class: "muted small" }, shortTime(c.last_at))),

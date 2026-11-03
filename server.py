@@ -20,8 +20,11 @@ SECURE_COOKIES = os.environ.get("SECURE_COOKIES") == "1"
 STATIC_DIR = (Path(__file__).parent / "static").resolve()
 MAX_BODY = 64 * 1024
 
-PAGES = {"/": "index.html", "/dashboard": "dashboard.html", "/calendar": "calendar.html", "/prayers": "prayers.html",
-         "/groups": "groups.html", "/shared": "shared.html"}
+PAGES = {"/": "index.html", "/dashboard": "dashboard.html", "/calendar": "calendar.html",
+         "/prayers": "prayers.html", "/prayers/answered": "answered.html",
+         "/chat": "shared.html", "/shared": "shared.html",   # /shared kept so old links still work
+         "/groups": "groups.html", "/person": "person.html",
+         "/settings": "settings.html", "/permissions": "permissions.html"}
 CONTENT_TYPES = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8",
                  ".js": "text/javascript; charset=utf-8", ".svg": "image/svg+xml", ".ico": "image/x-icon"}
 SECURITY_HEADERS = {

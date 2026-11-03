@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Permissions · Daily Bread</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <main class="narrow stack">
+    <div>
+      <h1>Permissions</h1>
+      <p class="muted">Choose which chats can see your devotions and your prayer list. Each one is separate,
+        so you can share prayers without sharing devotions. Everyone in a chat you share with can also open
+        your page to see your devotion calendar and past devotions.</p>
+    </div>
+    <section class="card stack" id="summary"></section>
+    <section class="card">
+      <table class="perm-table">
+        <thead><tr><th scope="col">Chat</th><th scope="col">Devotions</th><th scope="col">Prayers</th></tr></thead>
+        <tbody id="perm-rows"></tbody>
+      </table>
+      <p class="muted" id="empty" hidden>You're not in any chats yet. <a href="/groups">Start one</a>.</p>
+    </section>
+  </main>
+  <script src="/static/common.js"></script>
+  <script src="/static/permissions.js"></script>
+</body>
+</html>

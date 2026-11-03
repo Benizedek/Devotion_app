@@ -62,10 +62,10 @@ $("go").addEventListener("click", async () => {
   try {
     if (addTo) {
       await api("POST", `/api/conversations/${addTo}/members`, { user_ids });
-      location.href = `/shared?c=${addTo}`;
+      location.href = `/chat?c=${addTo}`;
     } else {
       const { id } = await api("POST", "/api/conversations", { user_ids, name: $("group-name").value });
-      location.href = `/shared?c=${id}`;
+      location.href = `/chat?c=${id}`;
     }
   } catch (e) {
     $("error").textContent = e.message;

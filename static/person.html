@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Profile · Daily Bread</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <main class="stack">
+    <div>
+      <a href="/chat" id="back-link">← Back</a>
+      <h1 id="name"></h1>
+      <p class="muted" id="handle"></p>
+    </div>
+    <p class="card muted hidden" id="nothing"></p>
+
+    <div class="grid-2">
+      <div class="stack hidden" id="devotions-col">
+        <section class="card">
+          <div class="cal-head">
+            <button id="prev" aria-label="Previous month">‹</button>
+            <h2 id="month-label"></h2>
+            <button id="next" aria-label="Next month">›</button>
+          </div>
+          <div class="cal" id="cal"></div>
+        </section>
+        <section class="card stack" id="devotion-card">
+          <div>
+            <h2 id="devotion-date"></h2>
+            <div class="muted small">Read-only</div>
+          </div>
+          <div id="devotion-body"></div>
+        </section>
+      </div>
+
+      <section class="card stack hidden" id="prayers-card">
+        <h2>Prayer list</h2>
+        <ul class="list" id="prayers"></ul>
+      </section>
+    </div>
+  </main>
+  <script src="/static/common.js"></script>
+  <script src="/static/person.js"></script>
+</body>
+</html>

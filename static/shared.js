@@ -29,7 +29,7 @@ async function loadConvs() {
 async function openConv(id) {
   state.current = id;
   state.lastId = 0;
-  history.replaceState(null, "", `/shared?c=${id}`);
+  history.replaceState(null, "", `/chat?c=${id}`);
   $("layout").classList.add("show-thread");
   $("thread-empty").classList.add("hidden");
   $("thread-body").classList.remove("hidden");
@@ -54,13 +54,13 @@ function renderThreadHeader() {
   $("thread-sub").textContent = c.is_group
     ? `${c.members.length} ${c.members.length === 1 ? "member" : "members"}`
     : "@" + (c.members.find((m) => m.id !== state.me.id)?.username ?? "");
-  $("share-banner").classList.toggle("hidden", c.share_mine);
+  $("share-banner").classList.toggle("hidden", c.share_devotions || c.share_prayers);
 }
 
 function closeConv() {
   state.current = null;
   state.conv = null;
-  history.replaceState(null, "", "/shared");
+  history.replaceState(null, "", "/chat");
   $("layout").classList.remove("show-thread");
   $("thread-body").classList.add("hidden");
   $("thread-empty").classList.remove("hidden");
@@ -119,31 +119,33 @@ function renderMessage(m) {
 function renderSettings() {
   const c = state.conv;
 
-  // The sharing switch. A checkbox styled as a toggle, so keyboards and screen readers work for free.
-  const toggle = el("input", { type: "checkbox", role: "switch", id: "share-toggle", checked: c.share_mine });
-  toggle.addEventListener("change", async () => {
-    toggle.disabled = true;
-    try {
-      state.conv = await api("PATCH", `/api/conversations/${c.id}/settings`,
-        { share_mine: toggle.checked, today: localISO() });
+  // Two independent switches: devotions and prayers.
+  const shareSetting = (key, title, onText, offText) => el("div", { class: "setting" },
+    el("div", { class: "setting-label" },
+      el("strong", {}, title),
+      el("span", { class: "muted small" }, c[key] ? onText : offText)),
+    switchEl(c[key], async (on) => {
+      state.conv = await api("PATCH", `/api/conversations/${c.id}/settings`, { [key]: on, today: localISO() });
       renderThreadHeader();
       renderSettings();
       await loadMessages(true);
-      toast(state.conv.share_mine ? "Sharing turned on" : "Sharing turned off");
-    } catch (e) {
-      toggle.checked = !toggle.checked;
-      toggle.disabled = false;
-      toast(e.message);
-    }
-  });
+    }, title));
 
+  const sharingText = (m) => {
+    const parts = [m.share_devotions && "devotions", m.share_prayers && "prayers"].filter(Boolean);
+    return parts.length ? `Sharing ${parts.join(" & ")}` : "Not sharing";
+  };
   const memberRow = (m) => el("li", { class: "person" },
     el("div", {},
-      el("strong", {}, m.display_name), " ", el("span", { class: "muted" }, `@${m.username}`),
+      m.id === state.me.id
+        ? el("strong", {}, m.display_name)
+        : el("a", { class: "person-link", href: `/person?u=${encodeURIComponent(m.username)}`,
+            title: `See what ${m.display_name} shares` }, m.display_name),
+      " ", el("span", { class: "muted" }, `@${m.username}`),
       m.id === state.me.id ? el("span", { class: "muted" }, " (you)") : null,
       el("div", { class: "row small" },
         m.is_admin ? el("span", { class: "badge" }, "Creator") : null,
-        el("span", { class: "muted" }, m.sharing ? "Sharing devotions & prayers" : "Not sharing"))),
+        el("span", { class: "muted" }, sharingText(m)))),
     c.is_admin && m.id !== state.me.id
       ? el("button", { class: "danger", onclick: async () => {
           if (!confirm(`Remove ${m.display_name} from ${c.title}?`)) return;
@@ -158,13 +160,12 @@ function renderSettings() {
 
   $("settings").replaceChildren(
     el("div", { class: "stack" },
-      el("div", { class: "setting" },
-        el("label", { for: "share-toggle", class: "setting-label" },
-          el("strong", {}, "Share my devotions & prayer list"),
-          el("span", { class: "muted small" }, c.share_mine
-            ? "This chat sees your prayer list live, and each day's devotion is posted here when you write it."
-            : "Off: nothing of yours is shared with this chat.")),
-        el("span", { class: "switch" }, toggle, el("span", { class: "slider", "aria-hidden": "true" }))),
+      shareSetting("share_devotions", "Share my devotions",
+        "This chat can see your devotion calendar and past devotions, and each day's devotion is posted here.",
+        "Off: this chat can't see your devotions."),
+      shareSetting("share_prayers", "Share my prayer list",
+        "This chat sees your prayer list live under Praying for others.",
+        "Off: this chat can't see your prayer list."),
       el("div", {},
         el("div", { class: "card-head" },
           el("h3", {}, c.is_group ? `Members (${c.members.length})` : "Chat with"),
@@ -176,7 +177,7 @@ function renderSettings() {
             await api("POST", `/api/conversations/${c.id}/leave`);
             closeConv();
           } }, "Leave group"))
-        : el("p", { class: "muted small" }, "Want more people? Start a group from the Groups tab.")));
+        : el("p", { class: "muted small" }, "Want more people? Use “+ New” in your chat list to start a group.")));
 }
 
 function openSettings() {

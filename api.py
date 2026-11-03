@@ -86,8 +86,24 @@ def logout(conn, user, args, body, query):
     return {"ok": True, "_clear_session": True}
 
 
+THEMES = ("warm", "sage", "ocean", "plum", "slate")
+
+
 def me(conn, user, args, body, query):
-    return user
+    prefs = conn.execute("SELECT theme, full_width FROM users WHERE id = ?", (user["id"],)).fetchone()
+    return {**user, "theme": prefs["theme"], "full_width": bool(prefs["full_width"])}
+
+
+def update_preferences(conn, user, args, body, query):
+    if "theme" in body:
+        if body["theme"] not in THEMES:
+            raise ApiError(400, "Unknown color theme")
+        conn.execute("UPDATE users SET theme = ? WHERE id = ?", (body["theme"], user["id"]))
+    if "full_width" in body:
+        if not isinstance(body["full_width"], bool):
+            raise ApiError(400, "full_width must be true or false")
+        conn.execute("UPDATE users SET full_width = ? WHERE id = ?", (int(body["full_width"]), user["id"]))
+    return me(conn, user, args, body, query)
 
 
 def search_users(conn, user, args, body, query):
@@ -108,7 +124,7 @@ def search_users(conn, user, args, body, query):
 # ---------- conversations (chats) ----------
 def require_member(conn, conv_id: int, user):
     row = conn.execute(
-        """SELECT c.id, c.name, c.is_group, c.created_by, m.share_mine FROM conversations c
+        """SELECT c.id, c.name, c.is_group, c.created_by, m.share_devotions, m.share_prayers FROM conversations c
            JOIN conversation_members m ON m.conversation_id = c.id
            WHERE c.id = ? AND m.user_id = ?""",
         (conv_id, user["id"]),
@@ -120,7 +136,7 @@ def require_member(conn, conv_id: int, user):
 
 def members_of(conn, conv_id: int) -> list[dict]:
     rows = conn.execute(
-        """SELECT u.id, u.display_name, u.username, m.share_mine AS sharing FROM conversation_members m
+        """SELECT u.id, u.display_name, u.username, m.share_devotions, m.share_prayers FROM conversation_members m
            JOIN users u ON u.id = m.user_id WHERE m.conversation_id = ? ORDER BY u.display_name""",
         (conv_id,),
     ).fetchall()
@@ -236,30 +252,55 @@ def get_conversation(conn, user, args, body, query):
     conv = require_member(conn, parse_id(args[0]), user)
     members = members_of(conn, conv["id"])
     for m in members:
-        m["sharing"] = bool(m["sharing"])
+        m["share_devotions"] = bool(m["share_devotions"])
+        m["share_prayers"] = bool(m["share_prayers"])
         m["is_admin"] = bool(conv["is_group"]) and m["id"] == conv["created_by"]
     return {"id": conv["id"], "title": title_for(conv, members, user["id"]),
             "name": conv["name"], "is_group": bool(conv["is_group"]), "members": members,
-            "share_mine": bool(conv["share_mine"]),
+            "share_devotions": bool(conv["share_devotions"]),
+            "share_prayers": bool(conv["share_prayers"]),
             "is_admin": bool(conv["is_group"]) and conv["created_by"] == user["id"]}
 
 
+SHARE_SETTINGS = {"share_devotions": "devotions", "share_prayers": "prayer list"}
+
+
 def update_settings(conn, user, args, body, query):
-    """Turn sharing my devotions + prayer list with this chat on or off."""
+    """Turn sharing my devotions and/or my prayer list with this chat on or off (independently)."""
     conv = require_member(conn, parse_id(args[0]), user)
-    if not isinstance(body.get("share_mine"), bool):
-        raise ApiError(400, "share_mine must be true or false")
-    share = body["share_mine"]
-    if share != bool(conv["share_mine"]):
-        conn.execute("UPDATE conversation_members SET share_mine = ? WHERE conversation_id = ? AND user_id = ?",
-                     (int(share), conv["id"], user["id"]))
-        verb = "started" if share else "stopped"
+    changes = {k: body[k] for k in SHARE_SETTINGS if k in body}
+    if not changes:
+        raise ApiError(400, "Nothing to change")
+    for key, value in changes.items():
+        if not isinstance(value, bool):
+            raise ApiError(400, f"{key} must be true or false")
+        if value == bool(conv[key]):
+            continue
+        # key comes from SHARE_SETTINGS, never from the client, so it's safe in the SQL text.
+        conn.execute(f"UPDATE conversation_members SET {key} = ? WHERE conversation_id = ? AND user_id = ?",
+                     (int(value), conv["id"], user["id"]))
+        verb = "started" if value else "stopped"
         post_message(conn, conv["id"], user["id"], "system",
-                     f"{user['display_name']} {verb} sharing their devotions and prayer list")
-        if share and body.get("today"):
+                     f"{user['display_name']} {verb} sharing their {SHARE_SETTINGS[key]}")
+        if key == "share_devotions" and value and body.get("today"):
             # Post today's devotion right away if it's already written and not here yet.
             post_devotion_if_new(conn, user, conv["id"], parse_date(body["today"]))
     return get_conversation(conn, user, [conv["id"]], body, query)
+
+
+def list_permissions(conn, user, args, body, query):
+    """Every chat I'm in, with my two share settings, for the Permissions page."""
+    rows = conn.execute(
+        """SELECT c.id, c.name, c.is_group, m.share_devotions, m.share_prayers FROM conversations c
+           JOIN conversation_members m ON m.conversation_id = c.id AND m.user_id = ?""",
+        (user["id"],),
+    ).fetchall()
+    result = [{"id": r["id"], "title": title_for(r, members_of(conn, r["id"]), user["id"]),
+               "is_group": bool(r["is_group"]),
+               "share_devotions": bool(r["share_devotions"]), "share_prayers": bool(r["share_prayers"])}
+              for r in rows]
+    result.sort(key=lambda r: (not r["is_group"], r["title"].lower()))
+    return result
 
 
 def remove_member(conn, user, args, body, query):
@@ -340,7 +381,7 @@ def list_messages(conn, user, args, body, query):
         """SELECT * FROM (
              SELECT m.id, m.kind, m.body, m.created_at, m.sender_id, u.display_name AS sender,
                     m.devotion_id, d.entry_date, d.scripture, d.observations, d.interpretation, d.application,
-                    am.share_mine AS author_sharing
+                    am.share_devotions AS author_sharing
              FROM messages m JOIN users u ON u.id = m.sender_id
              LEFT JOIN devotions d ON d.id = m.devotion_id
              LEFT JOIN conversation_members am ON am.conversation_id = m.conversation_id AND am.user_id = m.sender_id
@@ -395,11 +436,11 @@ def get_devotion(conn, user, args, body, query):
 
 
 def sharing_chats(conn, user) -> list[dict]:
-    """Chats I've turned sharing on for."""
+    """Chats I've turned devotion sharing on for."""
     rows = conn.execute(
         """SELECT c.id, c.name, c.is_group FROM conversations c
            JOIN conversation_members m ON m.conversation_id = c.id
-           WHERE m.user_id = ? AND m.share_mine = 1""",
+           WHERE m.user_id = ? AND m.share_devotions = 1""",
         (user["id"],),
     ).fetchall()
     return [{"id": r["id"], "title": title_for(r, members_of(conn, r["id"]), user["id"])} for r in rows]
@@ -502,24 +543,81 @@ def delete_prayer(conn, user, args, body, query):
 
 
 def shared_prayer_lists(conn, user, args, body, query):
-    """Prayer lists of people who share with a chat I'm in. Read live from the prayers table."""
+    """Prayer lists of people who share prayers with a chat I'm in. Read live from the prayers table.
+
+    'via' lists the chats each list reaches me through, so the page can filter by group or person.
+    """
     owners = conn.execute(
-        """SELECT DISTINCT u.id, u.display_name, u.username FROM conversation_members theirs
+        """SELECT u.id, u.display_name, u.username, GROUP_CONCAT(theirs.conversation_id) AS via
+           FROM conversation_members theirs
            JOIN conversation_members mine ON mine.conversation_id = theirs.conversation_id AND mine.user_id = ?
            JOIN users u ON u.id = theirs.user_id
-           WHERE theirs.share_mine = 1 AND theirs.user_id != ? ORDER BY u.display_name""",
+           WHERE theirs.share_prayers = 1 AND theirs.user_id != ?
+           GROUP BY u.id ORDER BY u.display_name""",
         (user["id"], user["id"]),
     ).fetchall()
-    result = []
-    for owner in owners:
-        prayers = conn.execute(
-            """SELECT id, title, body, answered_at, updated_at FROM prayers
-               WHERE user_id = ? ORDER BY answered_at IS NOT NULL, updated_at DESC""",
-            (owner["id"],),
-        ).fetchall()
-        result.append({"owner": owner["display_name"], "username": owner["username"],
-                       "prayers": [dict(p) for p in prayers]})
-    return result
+    return [{"owner": o["display_name"], "username": o["username"],
+             "via": [int(v) for v in o["via"].split(",")],
+             "prayers": active_prayers(conn, o["id"])} for o in owners]
+
+
+def active_prayers(conn, user_id: int) -> list[dict]:
+    """Answered prayers live in the owner's archive, so others only see ones still being prayed for."""
+    rows = conn.execute(
+        """SELECT id, title, body, updated_at FROM prayers
+           WHERE user_id = ? AND answered_at IS NULL ORDER BY updated_at DESC""",
+        (user_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+# ---------- another person's page ----------
+def can_see(conn, viewer_id: int, owner_id: int, what: str) -> bool:
+    """True if the owner shares `what` with any chat the viewer is also in."""
+    if viewer_id == owner_id:
+        return True
+    column = {"devotions": "share_devotions", "prayers": "share_prayers"}[what]   # whitelist, never client text
+    return conn.execute(
+        f"""SELECT 1 FROM conversation_members theirs
+            JOIN conversation_members mine ON mine.conversation_id = theirs.conversation_id AND mine.user_id = ?
+            WHERE theirs.user_id = ? AND theirs.{column} = 1 LIMIT 1""",
+        (viewer_id, owner_id),
+    ).fetchone() is not None
+
+
+def find_person(conn, username: str):
+    row = conn.execute("SELECT id, username, display_name FROM users WHERE username = ?", (username,)).fetchone()
+    if row is None:
+        raise ApiError(404, "No one with that username")
+    return row
+
+
+def person_profile(conn, user, args, body, query):
+    p = find_person(conn, args[0])
+    return {"username": p["username"], "display_name": p["display_name"], "is_me": p["id"] == user["id"],
+            "can_see_devotions": can_see(conn, user["id"], p["id"], "devotions"),
+            "can_see_prayers": can_see(conn, user["id"], p["id"], "prayers")}
+
+
+def person_devotion_month(conn, user, args, body, query):
+    p = find_person(conn, args[0])
+    if not can_see(conn, user["id"], p["id"], "devotions"):
+        raise ApiError(403, f"{p['display_name']} isn't sharing devotions with you")
+    return devotions_for_month(conn, {"id": p["id"]}, args, body, query)
+
+
+def person_devotion(conn, user, args, body, query):
+    p = find_person(conn, args[0])
+    if not can_see(conn, user["id"], p["id"], "devotions"):
+        raise ApiError(403, f"{p['display_name']} isn't sharing devotions with you")
+    return get_devotion(conn, {"id": p["id"]}, [args[1]], body, query)
+
+
+def person_prayers(conn, user, args, body, query):
+    p = find_person(conn, args[0])
+    if not can_see(conn, user["id"], p["id"], "prayers"):
+        raise ApiError(403, f"{p['display_name']} isn't sharing prayers with you")
+    return active_prayers(conn, p["id"])
 
 
 # ---------- routing table: (method, path regex, handler, login required) ----------
@@ -528,6 +626,12 @@ ROUTES = [
     ("POST",   r"/api/login",                            login,                False),
     ("POST",   r"/api/logout",                           logout,               False),
     ("GET",    r"/api/me",                               me,                   True),
+    ("PATCH",  r"/api/me/preferences",                   update_preferences,   True),
+    ("GET",    r"/api/me/permissions",                   list_permissions,     True),
+    ("GET",    r"/api/people/([A-Za-z0-9_.]+)",          person_profile,       True),
+    ("GET",    r"/api/people/([A-Za-z0-9_.]+)/devotions", person_devotion_month, True),
+    ("GET",    r"/api/people/([A-Za-z0-9_.]+)/devotions/([\d-]+)", person_devotion, True),
+    ("GET",    r"/api/people/([A-Za-z0-9_.]+)/prayers",  person_prayers,       True),
     ("GET",    r"/api/users/search",                     search_users,         True),
 
     ("GET",    r"/api/conversations",                    list_conversations,   True),

@@ -23,13 +23,16 @@
           <h2 id="editor-date"></h2>
           <div class="muted" id="editor-status"></div>
         </div>
-        <button id="today-btn" class="hidden">Go to today</button>
+        <div class="row">
+          <button id="today-btn" class="hidden">Go to today</button>
+          <button id="edit-btn" class="hidden">Edit</button>
+        </div>
       </div>
 
-      <!-- Past days: read-only -->
+      <!-- Saved devotions and past days: read-only -->
       <div id="read-view" class="hidden"></div>
 
-      <!-- Today: editable -->
+      <!-- Today, while writing or editing -->
       <div id="edit-view" class="stack hidden">
         <div>
           <label for="scripture">Scripture</label>
@@ -53,10 +56,11 @@
         <div class="error" id="editor-error"></div>
         <div class="row">
           <button class="primary" id="save">Save</button>
+          <button class="hidden" id="cancel">Cancel</button>
           <button class="danger hidden" id="delete">Delete</button>
         </div>
-        <p class="muted small" id="visible-to"></p>
       </div>
+      <p class="muted small hidden" id="visible-to"></p>
     </section>
   </main>
   <script src="/static/common.js"></script>

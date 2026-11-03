@@ -66,22 +66,87 @@ function toast(msg) {
   t._timer = setTimeout(() => t.classList.remove("show"), 2200);
 }
 
+// ---------- display preferences (color theme, full width) ----------
+// Saved on the server so they follow you across devices. A copy is kept in localStorage
+// only so the page can paint in the right colors before the server answers.
+function applyPrefs(prefs) {
+  document.documentElement.dataset.theme = prefs.theme || "warm";
+  document.documentElement.dataset.width = prefs.full_width ? "full" : "normal";
+  try { localStorage.setItem("prefs", JSON.stringify({ theme: prefs.theme, full_width: prefs.full_width })); } catch {}
+}
+try { applyPrefs(JSON.parse(localStorage.getItem("prefs")) || {}); } catch { applyPrefs({}); }
+
 // Header + login check shared by every logged-in page.
 async function initPage() {
   const me = await api("GET", "/api/me");
-  const links = [["/dashboard", "Dashboard"], ["/calendar", "Devotions"], ["/prayers", "Prayer list"],
-                 ["/shared", "Shared with me"], ["/groups", "Groups"]];
+  applyPrefs(me);
+  const links = [["/dashboard", "Dashboard"], ["/calendar", "Devotions"], ["/prayers", "Prayer list"], ["/chat", "Chat"]];
+  const here = location.pathname === "/shared" ? "/chat" : location.pathname;
+
+  const menu = el("div", { class: "menu hidden", id: "profile-menu", role: "menu" },
+    el("div", { class: "menu-who" }, el("strong", {}, me.display_name), el("span", { class: "muted small" }, `@${me.username}`)),
+    el("a", { href: "/settings", role: "menuitem" }, "Settings"),
+    el("a", { href: "/permissions", role: "menuitem" }, "Permissions"),
+    el("hr"),
+    el("button", { role: "menuitem", onclick: async () => { await api("POST", "/api/logout"); location.href = "/"; } }, "Log out"));
+  const profileBtn = el("button", { class: "profile-btn", "aria-haspopup": "menu", "aria-expanded": "false",
+    "aria-controls": "profile-menu" }, me.display_name, el("span", { "aria-hidden": "true" }, " ▾"));
+  const setMenu = (open) => {
+    menu.classList.toggle("hidden", !open);
+    profileBtn.setAttribute("aria-expanded", String(open));
+  };
+  profileBtn.addEventListener("click", (e) => { e.stopPropagation(); setMenu(menu.classList.contains("hidden")); });
+  document.addEventListener("click", (e) => { if (!menu.contains(e.target)) setMenu(false); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") setMenu(false); });
+
   const header = el("header", { class: "topbar" },
     el("a", { class: "brand", href: "/dashboard" }, "Daily Bread"),
     el("nav", { class: "nav" }, links.map(([href, label]) =>
-      el("a", { href, class: location.pathname === href ? "active" : "" }, label,
-        href === "/shared" ? el("span", { id: "nav-unread", class: "nav-badge hidden" }) : null))),
-    el("span", { class: "who" }, `${me.display_name} · @${me.username}`),
-    el("button", { onclick: async () => { await api("POST", "/api/logout"); location.href = "/"; } }, "Log out"));
+      el("a", { href, class: here === href || here.startsWith(href + "/") ? "active" : "" }, label,
+        href === "/chat" ? el("span", { id: "nav-unread", class: "nav-badge hidden" }) : null))),
+    el("div", { class: "profile" }, profileBtn, menu));
   document.body.prepend(header);
   refreshUnread();
   setInterval(() => { if (!document.hidden) refreshUnread(); }, 15_000);
   return me;
+}
+
+// An on/off switch built on a real checkbox, so keyboards and screen readers work.
+// onChange(checked) should return a promise; if it throws, the switch flips back.
+function switchEl(checked, onChange, label) {
+  const input = el("input", { type: "checkbox", role: "switch", checked, "aria-label": label });
+  input.addEventListener("change", async () => {
+    input.disabled = true;
+    try { await onChange(input.checked); }
+    catch (e) { input.checked = !input.checked; toast(e.message); }
+    finally { input.disabled = false; }
+  });
+  return el("span", { class: "switch" }, input, el("span", { class: "slider", "aria-hidden": "true" }));
+}
+
+// Month grid used by your own Devotions page and by other people's pages.
+function monthGrid({ year, month, done, selected, onSelect }) {
+  const today = localISO();
+  const first = new Date(year, month, 1);
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const cells = ["S", "M", "T", "W", "T", "F", "S"].map((d) => el("div", { class: "dow" }, d));
+  for (let i = 0; i < first.getDay(); i++) cells.push(el("div", { class: "day blank" }));
+  for (let d = 1; d <= daysInMonth; d++) {
+    const iso = localISO(new Date(year, month, d));
+    const future = iso > today;
+    const classes = ["day", done.has(iso) && "done", iso === today && "today",
+                     iso === selected && "selected", future && "future"].filter(Boolean);
+    cells.push(el("button", {
+      class: classes.join(" "), disabled: future,
+      "aria-label": `${iso}${done.has(iso) ? ", devotion written" : ""}`,
+      onclick: () => onSelect(iso),
+    }, d));
+  }
+  return cells;
+}
+
+function monthKey(year, month) {
+  return `${year}-${String(month + 1).padStart(2, "0")}`;
 }
 
 async function refreshUnread(conversations) {

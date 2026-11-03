@@ -10,6 +10,8 @@ CREATE TABLE IF NOT EXISTS users (
     username      TEXT NOT NULL UNIQUE COLLATE NOCASE,
     display_name  TEXT NOT NULL,
     password_hash TEXT NOT NULL,
+    theme         TEXT NOT NULL DEFAULT 'warm',   -- color theme name (see app.css)
+    full_width    INTEGER NOT NULL DEFAULT 0,     -- 1 = pages fill the whole window
     created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -32,7 +34,8 @@ CREATE TABLE IF NOT EXISTS conversation_members (
     conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     last_read_id    INTEGER NOT NULL DEFAULT 0,   -- highest message id this member has seen
-    share_mine      INTEGER NOT NULL DEFAULT 0,   -- 1 = this chat can see my devotions + prayer list
+    share_devotions INTEGER NOT NULL DEFAULT 0,   -- 1 = this chat can see my devotions (calendar + history)
+    share_prayers   INTEGER NOT NULL DEFAULT 0,   -- 1 = this chat can see my prayer list
     joined_at       TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (conversation_id, user_id)
 );
@@ -52,7 +55,7 @@ CREATE TABLE IF NOT EXISTS devotions (
 
 -- kind: 'text' | 'devotion' | 'system'
 -- A devotion message points at the live devotion, so later edits show up in the chat.
--- It is only shown while the author still has share_mine on for that chat.
+-- It is only shown while the author still has share_devotions on for that chat.
 CREATE TABLE IF NOT EXISTS messages (
     id              INTEGER PRIMARY KEY,
     conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
@@ -75,17 +78,23 @@ CREATE TABLE IF NOT EXISTS prayers (
 );
 """
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
+
+
+def columns(conn, table: str) -> set[str]:
+    return {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
 
 
 def migrate(conn):
-    """Upgrade an existing database in place. PRAGMA user_version records which version it's at.
+    """Upgrade an existing database in place, one version step at a time.
 
-    Version 2 (chats) never set user_version, so 0 means "version 2, or brand new".
+    PRAGMA user_version records which version the file is at. Version 2 (chats) never set it,
+    so 0 means "version 2, or brand new". A brand-new file has no tables, so every step skips.
     """
     version = conn.execute("PRAGMA user_version").fetchone()[0]
     tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
 
+    # v3: one share toggle per chat replaces prayer_list_shares
     if version < 3 and "conversation_members" in tables:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(conversation_members)")}
         if "share_mine" not in cols:
@@ -97,6 +106,26 @@ def migrate(conn):
                                   (SELECT conversation_id, owner_id FROM prayer_list_shares)""")
             conn.execute("DROP TABLE prayer_list_shares")
         conn.execute("DELETE FROM messages WHERE kind = 'prayer_list'")
+
+    # v4: separate toggles for devotions and prayers; per-user display preferences
+    if version < 4 and "conversation_members" in tables:
+        cols = columns(conn, "conversation_members")
+        for col in ("share_devotions", "share_prayers"):
+            if col not in cols:
+                conn.execute(f"ALTER TABLE conversation_members ADD COLUMN {col} INTEGER NOT NULL DEFAULT 0")
+        if "share_mine" in cols:
+            # Whoever was sharing "everything" keeps sharing both.
+            conn.execute("UPDATE conversation_members SET share_devotions = share_mine, share_prayers = share_mine")
+            try:
+                conn.execute("ALTER TABLE conversation_members DROP COLUMN share_mine")
+            except sqlite3.OperationalError:
+                pass  # SQLite older than 3.35 can't drop columns; the unused column is harmless
+    if version < 4 and "users" in tables:
+        cols = columns(conn, "users")
+        if "theme" not in cols:
+            conn.execute("ALTER TABLE users ADD COLUMN theme TEXT NOT NULL DEFAULT 'warm'")
+        if "full_width" not in cols:
+            conn.execute("ALTER TABLE users ADD COLUMN full_width INTEGER NOT NULL DEFAULT 0")
 
     conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
@@ -111,7 +140,7 @@ def connect():
 def init():
     DB_PATH.parent.mkdir(exist_ok=True)
     with connect() as conn:
-        cols = {r[1] for r in conn.execute("PRAGMA table_info(devotions)")}
+        cols = columns(conn, "devotions")
         if cols and "observations" not in cols:
             raise SystemExit(
                 "data/devotion.db was made by an older version of this app.\n"

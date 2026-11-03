@@ -33,10 +33,14 @@ browser ──fetch JSON──▶ server.py ──▶ api.py ──▶ db.py (SQ
 
 - **users**, **sessions**
 - **conversations** + **conversation_members**: chats. `is_group = 0` is a 1-on-1 chat (reused, never duplicated). In groups anyone can add people; only the creator (`created_by`) can remove them, and the role passes on if they leave. `last_read_id` drives unread badges.
-- **conversation_members.share_mine**: the per-chat Settings toggle. When on, that chat sees your prayer list live and each day's devotion is posted there on its first save. When off, your devotion cards in that chat are hidden and your prayers disappear from their "Praying for others".
+- **conversation_members.share_devotions / share_prayers**: two independent per-chat permissions, set in a chat's Settings or on the Permissions page.
+  - Devotions on: that chat's members can open your page (`/person?u=you`) to see your calendar and any devotion, and each day's devotion is posted into the chat on its first save. Off: your devotion cards in that chat are hidden.
+  - Prayers on: your *active* prayers appear in their "Praying for others" and on your page.
+  - `api.can_see()` is the single rule for "may this viewer see that person's X?": true if the owner shares X with any chat the viewer is also in.
 - **messages**: `kind` is `text`, `devotion` or `system` ("Ben added Grace"). A devotion message points at the live devotion, so edits show up in the chat.
 - **devotions**: one per user per day, with Scripture + Observations / Interpretation / Application. Only *today's* devotion can be saved or deleted (checked in `require_editable`); past days are read-only. `entry_date` is the writer's *local* date, so travelling doesn't shift days.
-- **prayers**: `answered_at` NULL means still praying.
+- **prayers**: `answered_at` NULL means still praying. Answered prayers move to your private archive (`/prayers/answered`) and are never shown to others.
+- **users.theme / users.full_width**: display preferences, stored on the account so they follow you across devices.
 
 Access is checked on every request: you only see chats you're a member of.
 

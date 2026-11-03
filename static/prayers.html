@@ -27,14 +27,20 @@
         </section>
 
         <section class="card stack">
-          <h2>My prayers</h2>
+          <div class="card-head">
+            <h2>My prayers</h2>
+            <a class="button-link" href="/prayers/answered" id="answered-link">Answered</a>
+          </div>
           <ul class="list" id="my-prayers"></ul>
         </section>
       </div>
 
       <section class="card stack">
-        <h2>Praying for others</h2>
-        <p class="muted" id="refreshed"></p>
+        <div class="card-head">
+          <h2>Praying for others</h2>
+          <select id="filter" aria-label="Show prayers from"></select>
+        </div>
+        <p class="muted small" id="refreshed"></p>
         <div id="shared-lists" class="stack"></div>
       </section>
     </div>
