@@ -2,12 +2,9 @@
 
 async function api(method, path, body) {
   const opts = { method, headers: {} };
-  if (body !== undefined) {
+  if (method !== "GET") {
     opts.headers["Content-Type"] = "application/json";
-    opts.body = JSON.stringify(body);
-  } else if (method !== "GET") {
-    opts.headers["Content-Type"] = "application/json";
-    opts.body = "{}";
+    opts.body = JSON.stringify(body ?? {});
   }
   const res = await fetch(path, opts);
   const data = await res.json().catch(() => ({}));
@@ -47,6 +44,19 @@ function prettyDate(iso) {
     { weekday: "long", month: "long", day: "numeric", year: "numeric" });
 }
 
+// SQLite stores "YYYY-MM-DD HH:MM:SS" in UTC. Safari can't parse the space, so swap in a "T".
+function utcDate(sqliteTime) {
+  return new Date(sqliteTime.replace(" ", "T") + "Z");
+}
+
+function shortTime(sqliteTime) {
+  const d = utcDate(sqliteTime);
+  const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return d.toDateString() === new Date().toDateString()
+    ? time
+    : `${d.toLocaleDateString([], { month: "short", day: "numeric" })}, ${time}`;
+}
+
 function toast(msg) {
   let t = document.querySelector(".toast");
   if (!t) { t = el("div", { class: "toast" }); document.body.append(t); }
@@ -59,34 +69,45 @@ function toast(msg) {
 // Header + login check shared by every logged-in page.
 async function initPage() {
   const me = await api("GET", "/api/me");
-  const links = [["/dashboard", "Dashboard"], ["/calendar", "Devotions"], ["/prayers", "Prayer list"], ["/shared", "Shared with me"], ["/groups", "Groups"]];
+  const links = [["/dashboard", "Dashboard"], ["/calendar", "Devotions"], ["/prayers", "Prayer list"],
+                 ["/shared", "Shared with me"], ["/groups", "Groups"]];
   const header = el("header", { class: "topbar" },
     el("a", { class: "brand", href: "/dashboard" }, "Daily Bread"),
     el("nav", { class: "nav" }, links.map(([href, label]) =>
-      el("a", { href, class: location.pathname === href ? "active" : "" }, label))),
+      el("a", { href, class: location.pathname === href ? "active" : "" }, label,
+        href === "/shared" ? el("span", { id: "nav-unread", class: "nav-badge hidden" }) : null))),
     el("span", { class: "who" }, `${me.display_name} · @${me.username}`),
     el("button", { onclick: async () => { await api("POST", "/api/logout"); location.href = "/"; } }, "Log out"));
   document.body.prepend(header);
+  refreshUnread();
+  setInterval(() => { if (!document.hidden) refreshUnread(); }, 15_000);
   return me;
 }
 
-// Reusable "share with a person or group" control.
-// onShare receives {username} or {group_id}.
-async function shareControl(onShare) {
-  const groups = await api("GET", "/api/groups");
-  const select = el("select", {},
-    el("option", { value: "" }, "Choose a group…"),
-    groups.map((g) => el("option", { value: g.id }, g.name)));
-  const userInput = el("input", { placeholder: "or a username", autocomplete: "off" });
+async function refreshUnread(conversations) {
+  const convs = conversations ?? await api("GET", "/api/conversations").catch(() => []);
+  const n = convs.reduce((sum, c) => sum + c.unread, 0);
+  const badge = document.getElementById("nav-unread");
+  if (!badge) return;
+  badge.textContent = n > 99 ? "99+" : n;
+  badge.classList.toggle("hidden", n === 0);
+}
+
+// Reusable "send to a chat" control. onSend receives the chosen conversation id.
+async function chatPicker(onSend, buttonLabel = "Send") {
+  const convs = await api("GET", "/api/conversations");
+  if (!convs.length) {
+    return el("p", { class: "muted" }, "To share, first ", el("a", { href: "/groups" }, "start a chat or group"), ".");
+  }
+  const select = el("select", { "aria-label": "Choose a chat" },
+    el("option", { value: "" }, "Choose a chat…"),
+    convs.map((c) => el("option", { value: c.id }, c.is_group ? `${c.title} (group)` : c.title)));
   const err = el("div", { class: "error" });
   const btn = el("button", { class: "primary", onclick: async () => {
     err.textContent = "";
-    const target = userInput.value.trim()
-      ? { username: userInput.value.trim() }
-      : select.value ? { group_id: Number(select.value) } : null;
-    if (!target) { err.textContent = "Pick a group or type a username."; return; }
-    try { await onShare(target); userInput.value = ""; select.value = ""; toast("Shared"); }
+    if (!select.value) { err.textContent = "Pick a chat first."; return; }
+    try { await onSend(Number(select.value)); select.value = ""; toast("Sent"); }
     catch (e) { err.textContent = e.message; }
-  } }, "Share");
-  return el("div", {}, el("div", { class: "row" }, select, userInput, btn), err);
+  } }, buttonLabel);
+  return el("div", {}, el("div", { class: "row" }, select, btn), err);
 }

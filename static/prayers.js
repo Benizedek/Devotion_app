@@ -65,7 +65,7 @@ async function loadShared() {
   $("refreshed").textContent = `Updated ${new Date().toLocaleTimeString()} · refreshes automatically`;
   if (!lists.length) {
     $("shared-lists").replaceChildren(el("p", { class: "muted" },
-      "No one has shared a prayer list with you yet. Join a group or share yours to get started."));
+      "No one has shared a prayer list with you yet. When someone shares theirs in one of your chats, it shows up here."));
     return;
   }
   $("shared-lists").replaceChildren(...lists.map((l) => el("div", {},
@@ -82,7 +82,8 @@ async function loadShared() {
   const [mine, shares] = await Promise.all([api("GET", "/api/prayers"), api("GET", "/api/prayer-shares")]);
   renderMine(mine);
   renderShares(shares);
-  $("share-control").append(await shareControl(async (target) => renderShares(await api("POST", "/api/prayer-shares", target))));
+  $("share-control").append(await chatPicker(async (convId) =>
+    renderShares(await api("POST", "/api/prayer-shares", { conversation_id: convId })), "Share list"));
   await loadShared();
   setInterval(() => { if (!document.hidden) loadShared(); }, REFRESH_MS);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) loadShared(); });

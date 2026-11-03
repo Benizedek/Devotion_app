@@ -1,44 +1,91 @@
+// People picker. Two modes:
+//   /groups          → pick people, then start a 1-on-1 chat or a group
+//   /groups?add=ID   → add people to an existing group chat
 const $ = (id) => document.getElementById(id);
+const addTo = Number(new URLSearchParams(location.search).get("add")) || null;
+const selected = new Map();        // user id -> user
+let alreadyIn = new Set();         // member ids when adding to an existing group
+let searchTimer;
+let lastResults = [];
 
-function render(groups) {
-  if (!groups.length) {
-    $("groups").replaceChildren(el("p", { class: "muted" }, "You're not in any groups yet. Start one, or join with a code."));
-    return;
+function renderSelected() {
+  $("selected").replaceChildren(...[...selected.values()].map((u) =>
+    el("span", { class: "pill" }, u.display_name,
+      el("button", { "aria-label": `Remove ${u.display_name}`, onclick: () => toggle(u) }, "×"))));
+  const n = selected.size;
+  $("go").disabled = n === 0;
+  if (addTo) {
+    $("go").textContent = n ? `Add ${n} ${n === 1 ? "person" : "people"}` : "Add people";
+  } else {
+    $("go").textContent = n > 1 ? "Create group" : "Start chat";
+    $("name-row").classList.toggle("hidden", n < 2);
   }
-  $("groups").replaceChildren(...groups.map((g) => el("section", { class: "card stack" },
-    el("div", { class: "row" },
-      el("h2", {}, g.name),
-      g.is_owner ? el("span", { class: "badge" }, "Leader") : null),
-    el("div", { class: "row" },
-      el("span", { class: "muted" }, "Invite code:"),
-      el("code", { class: "invite" }, g.invite_code),
-      el("button", { onclick: async () => {
-        await navigator.clipboard.writeText(g.invite_code);
-        toast("Invite code copied");
-      } }, "Copy")),
-    el("div", { class: "muted" }, `${g.members.length} member${g.members.length === 1 ? "" : "s"}: `,
-      g.members.map((m) => `${m.display_name} (@${m.username})`).join(", ")),
-    el("div", {}, el("button", { class: "danger", onclick: async () => {
-      if (confirm(`Leave ${g.name}? Things shared with this group will no longer be visible to you.`))
-        render(await api("POST", `/api/groups/${g.id}/leave`));
-    } }, "Leave group")))));
 }
 
-$("create-form").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  $("create-error").textContent = "";
-  try { render(await api("POST", "/api/groups", { name: $("group-name").value })); $("group-name").value = ""; }
-  catch (err) { $("create-error").textContent = err.message; }
+function renderResults(users, q) {
+  lastResults = users;
+  if (q.length < 2) { $("results").replaceChildren(); return; }
+  if (!users.length) {
+    $("results").replaceChildren(el("li", { class: "muted" }, `No one found for “${q}”. They may need to sign up first.`));
+    return;
+  }
+  $("results").replaceChildren(...users.map((u) => {
+    const inGroup = alreadyIn.has(u.id);
+    const picked = selected.has(u.id);
+    return el("li", { class: "person" },
+      el("div", {}, el("strong", {}, u.display_name), " ", el("span", { class: "muted" }, `@${u.username}`)),
+      inGroup
+        ? el("span", { class: "muted small" }, "Already in group")
+        : el("button", { class: picked ? "" : "primary", onclick: () => toggle(u) }, picked ? "Added ✓" : "Add"));
+  }));
+}
+
+function toggle(u) {
+  if (selected.has(u.id)) selected.delete(u.id); else selected.set(u.id, u);
+  renderSelected();
+  renderResults(lastResults, $("search").value.trim());
+}
+
+$("search").addEventListener("input", () => {
+  clearTimeout(searchTimer);
+  const q = $("search").value.trim();
+  searchTimer = setTimeout(async () => {
+    const users = q.length < 2 ? [] : await api("GET", `/api/users/search?q=${encodeURIComponent(q)}`);
+    if (q === $("search").value.trim()) renderResults(users, q);   // ignore out-of-date responses
+  }, 250);
 });
 
-$("join-form").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  $("join-error").textContent = "";
-  try { render(await api("POST", "/api/groups/join", { code: $("join-code").value })); $("join-code").value = ""; toast("Joined"); }
-  catch (err) { $("join-error").textContent = err.message; }
+$("go").addEventListener("click", async () => {
+  $("error").textContent = "";
+  $("go").disabled = true;
+  const user_ids = [...selected.keys()];
+  try {
+    if (addTo) {
+      await api("POST", `/api/conversations/${addTo}/members`, { user_ids });
+      location.href = `/shared?c=${addTo}`;
+    } else {
+      const { id } = await api("POST", "/api/conversations", { user_ids, name: $("group-name").value });
+      location.href = `/shared?c=${id}`;
+    }
+  } catch (e) {
+    $("error").textContent = e.message;
+    $("go").disabled = false;
+  }
 });
 
 (async () => {
   await initPage();
-  render(await api("GET", "/api/groups"));
+  if (addTo) {
+    try {
+      const conv = await api("GET", `/api/conversations/${addTo}`);
+      alreadyIn = new Set(conv.members.map((m) => m.id));
+      $("heading").textContent = `Add people to ${conv.title}`;
+      $("sub").textContent = "They'll see the group's messages from now on.";
+    } catch {
+      location.href = "/groups";
+      return;
+    }
+  }
+  renderSelected();
+  $("search").focus();
 })();

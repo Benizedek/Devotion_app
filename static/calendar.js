@@ -1,4 +1,5 @@
 const $ = (id) => document.getElementById(id);
+const FIELDS = ["scripture", "observations", "interpretation", "application"];
 const today = localISO();
 const state = {
   year: new Date().getFullYear(),
@@ -8,19 +9,9 @@ const state = {
   dirty: false,
 };
 
-async function loadStats() {
-  const s = await api("GET", `/api/devotions/stats?today=${today}`);
-  const box = $("stats");
-  box.replaceChildren(
-    ...[[s.current_streak, "day streak"], [s.longest_streak, "longest streak"],
-        [`${s.last_30_days}/30`, "last 30 days"], [s.total, "total devotions"]]
-      .map(([n, label]) => el("div", { class: "stat" }, el("b", {}, n), el("span", {}, label))));
-}
-
 async function loadMonth() {
   const monthKey = `${state.year}-${String(state.month + 1).padStart(2, "0")}`;
-  const rows = await api("GET", `/api/devotions?month=${monthKey}`);
-  state.done = new Set(rows.map((r) => r.entry_date));
+  state.done = new Set(await api("GET", `/api/devotions?month=${monthKey}`));
   renderCalendar();
 }
 
@@ -53,29 +44,28 @@ async function selectDay(iso) {
   state.selected = iso;
   renderCalendar();
   await loadDevotion();
+  $("editor").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 async function loadDevotion() {
   const d = await api("GET", `/api/devotions/${state.selected}`);
   $("editor-date").textContent = prettyDate(state.selected);
-  $("title").value = d?.title ?? "";
-  $("scripture").value = d?.scripture ?? "";
-  $("body").value = d?.body ?? "";
+  for (const f of FIELDS) $(f).value = d?.[f] ?? "";
   $("editor-error").textContent = "";
   state.dirty = false;
   renderSaved(d);
 }
 
 function renderSaved(d) {
-  $("editor-status").textContent = d ? `Saved · last edited ${new Date(d.updated_at + "Z").toLocaleString()}` : "Not written yet";
+  $("editor-status").textContent = d ? `Saved · last edited ${utcDate(d.updated_at).toLocaleString()}` : "Not written yet";
   $("delete").classList.toggle("hidden", !d);
   $("share-section").classList.toggle("hidden", !d);
   if (!d) return;
-  $("share-list").replaceChildren(
-    d.shares.length ? "" : el("span", { class: "muted" }, "Only you can see this devotion."),
-    ...d.shares.map((s) => el("span", { class: "pill" }, s.label,
-      el("button", { "aria-label": `Stop sharing with ${s.label}`, onclick: async () => {
-        await api("DELETE", `/api/devotion-shares/${s.id}`);
+  $("sent-list").replaceChildren(
+    d.sent_to.length ? "Sent to:" : el("span", { class: "muted" }, "Only you can see this devotion."),
+    ...d.sent_to.map((s) => el("span", { class: "pill" }, s.label,
+      el("button", { "aria-label": `Unsend from ${s.label}`, title: "Unsend", onclick: async () => {
+        await api("DELETE", `/api/messages/${s.message_id}`);
         await loadDevotion();
       } }, "×"))));
 }
@@ -83,24 +73,23 @@ function renderSaved(d) {
 $("save").addEventListener("click", async () => {
   $("editor-error").textContent = "";
   try {
-    const d = await api("PUT", `/api/devotions/${state.selected}`, {
-      title: $("title").value, scripture: $("scripture").value, body: $("body").value,
-    });
+    const body = Object.fromEntries(FIELDS.map((f) => [f, $(f).value]));
+    const d = await api("PUT", `/api/devotions/${state.selected}`, body);
     state.dirty = false;
     renderSaved(d);
     toast("Saved");
-    await Promise.all([loadMonth(), loadStats()]);
+    await loadMonth();
   } catch (e) { $("editor-error").textContent = e.message; }
 });
 
 $("delete").addEventListener("click", async () => {
-  if (!confirm("Delete this devotion? This can't be undone.")) return;
+  if (!confirm("Delete this devotion? It will also disappear from any chats you sent it to.")) return;
   await api("DELETE", `/api/devotions/${state.selected}`);
-  await Promise.all([loadDevotion(), loadMonth(), loadStats()]);
+  await Promise.all([loadDevotion(), loadMonth()]);
   toast("Deleted");
 });
 
-for (const id of ["title", "scripture", "body"]) $(id).addEventListener("input", () => { state.dirty = true; });
+for (const f of FIELDS) $(f).addEventListener("input", () => { state.dirty = true; });
 window.addEventListener("beforeunload", (e) => { if (state.dirty) e.preventDefault(); });
 
 $("prev").addEventListener("click", () => {
@@ -112,9 +101,8 @@ $("next").addEventListener("click", () => {
 
 (async () => {
   await initPage();
-  $("share-control").append(await shareControl(async (target) => {
-    await api("POST", `/api/devotions/${state.selected}/shares`, target);
-    await loadDevotion();
+  $("share-control").append(await chatPicker(async (convId) => {
+    renderSaved(await api("POST", `/api/devotions/${state.selected}/send`, { conversation_id: convId }));
   }));
-  await Promise.all([loadMonth(), loadStats(), loadDevotion()]);
+  await Promise.all([loadMonth(), loadDevotion()]);
 })();

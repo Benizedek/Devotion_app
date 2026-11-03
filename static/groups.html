@@ -7,23 +7,28 @@
   <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-  <main class="stack">
-    <h1>Groups</h1>
-    <div class="grid-2">
-      <form class="card stack" id="create-form">
-        <h3>Start a group</h3>
-        <input id="group-name" maxlength="80" placeholder="e.g. Tuesday Bible Study" required>
-        <button class="primary" type="submit">Create</button>
-        <div class="error" id="create-error"></div>
-      </form>
-      <form class="card stack" id="join-form">
-        <h3>Join with an invite code</h3>
-        <input id="join-code" maxlength="40" placeholder="Paste the code someone sent you" required>
-        <button class="primary" type="submit">Join</button>
-        <div class="error" id="join-error"></div>
-      </form>
+  <main class="narrow stack">
+    <div>
+      <h1 id="heading">New chat</h1>
+      <p class="muted" id="sub">Pick one person for a private chat, or several to start a group.</p>
     </div>
-    <div id="groups" class="stack"></div>
+    <section class="card stack">
+      <div>
+        <label for="search">Find people</label>
+        <input id="search" placeholder="Search by name or username" autocomplete="off">
+      </div>
+      <div class="row" id="selected"></div>
+      <ul class="list" id="results"></ul>
+      <div id="name-row" class="hidden">
+        <label for="group-name">Group name (optional)</label>
+        <input id="group-name" maxlength="80" placeholder="e.g. Tuesday Bible Study">
+      </div>
+      <div class="error" id="error"></div>
+      <div class="row">
+        <button class="primary" id="go" disabled>Start chat</button>
+        <a href="/shared" class="muted">Cancel</a>
+      </div>
+    </section>
   </main>
   <script src="/static/common.js"></script>
   <script src="/static/groups.js"></script>

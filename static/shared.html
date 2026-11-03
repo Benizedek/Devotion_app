@@ -7,9 +7,36 @@
   <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-  <main class="stack">
-    <h1>Devotions shared with me</h1>
-    <div id="feed" class="stack"></div>
+  <main class="chat-main">
+    <div class="chat-layout" id="layout">
+      <aside class="card chat-list">
+        <div class="chat-list-head">
+          <h2>Chats</h2>
+          <a class="button-link" href="/groups">+ New</a>
+        </div>
+        <ul class="conv-list" id="conv-list"></ul>
+      </aside>
+
+      <section class="card chat-thread">
+        <div id="thread-empty" class="thread-empty muted">Pick a chat, or start a new one.</div>
+        <div id="thread-body" class="thread-body hidden">
+          <header class="thread-head">
+            <button id="back" class="back" aria-label="Back to chats">‹</button>
+            <div class="thread-title">
+              <h2 id="thread-title"></h2>
+              <div class="muted small" id="thread-sub"></div>
+            </div>
+            <button id="info-btn">Info</button>
+          </header>
+          <div id="info" class="thread-info hidden"></div>
+          <div id="messages" class="messages" aria-live="polite"></div>
+          <form id="composer" class="composer">
+            <input id="msg-input" placeholder="Message…" maxlength="4000" autocomplete="off" aria-label="Message">
+            <button class="primary" type="submit">Send</button>
+          </form>
+        </div>
+      </section>
+    </div>
   </main>
   <script src="/static/common.js"></script>
   <script src="/static/shared.js"></script>

@@ -19,42 +19,48 @@ CREATE TABLE IF NOT EXISTS sessions (
     expires_at TEXT NOT NULL
 );
 
--- "groups" is an SQL keyword, so the table is user_groups
-CREATE TABLE IF NOT EXISTS user_groups (
-    id          INTEGER PRIMARY KEY,
-    name        TEXT NOT NULL,
-    invite_code TEXT NOT NULL UNIQUE,
-    owner_id    INTEGER NOT NULL REFERENCES users(id),
-    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+-- A chat. Direct chats (is_group = 0) have exactly two members and no name.
+CREATE TABLE IF NOT EXISTS conversations (
+    id         INTEGER PRIMARY KEY,
+    name       TEXT,                      -- NULL = show member names instead
+    is_group   INTEGER NOT NULL,
+    created_by INTEGER NOT NULL REFERENCES users(id),
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE TABLE IF NOT EXISTS group_members (
-    group_id  INTEGER NOT NULL REFERENCES user_groups(id) ON DELETE CASCADE,
-    user_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    joined_at TEXT NOT NULL DEFAULT (datetime('now')),
-    PRIMARY KEY (group_id, user_id)
+CREATE TABLE IF NOT EXISTS conversation_members (
+    conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    last_read_id    INTEGER NOT NULL DEFAULT 0,   -- highest message id this member has seen
+    joined_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (conversation_id, user_id)
 );
 
 CREATE TABLE IF NOT EXISTS devotions (
-    id         INTEGER PRIMARY KEY,
-    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    entry_date TEXT NOT NULL,             -- YYYY-MM-DD in the writer's local time (travel-friendly)
-    title      TEXT NOT NULL DEFAULT '',
-    scripture  TEXT NOT NULL DEFAULT '',
-    body       TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    id             INTEGER PRIMARY KEY,
+    user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    entry_date     TEXT NOT NULL,         -- YYYY-MM-DD in the writer's local time (travel-friendly)
+    scripture      TEXT NOT NULL DEFAULT '',
+    observations   TEXT NOT NULL DEFAULT '',
+    interpretation TEXT NOT NULL DEFAULT '',
+    application    TEXT NOT NULL DEFAULT '',
+    created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at     TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE (user_id, entry_date)
 );
 
--- One row per (devotion, recipient). Recipient is a user OR a group.
-CREATE TABLE IF NOT EXISTS devotion_shares (
-    id                   INTEGER PRIMARY KEY,
-    devotion_id          INTEGER NOT NULL REFERENCES devotions(id) ON DELETE CASCADE,
-    shared_with_user_id  INTEGER REFERENCES users(id) ON DELETE CASCADE,
-    shared_with_group_id INTEGER REFERENCES user_groups(id) ON DELETE CASCADE,
-    created_at           TEXT NOT NULL DEFAULT (datetime('now'))
+-- kind: 'text' | 'devotion' | 'prayer_list' | 'system'
+-- A devotion message points at the live devotion, so later edits show up in the chat.
+CREATE TABLE IF NOT EXISTS messages (
+    id              INTEGER PRIMARY KEY,
+    conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    sender_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind            TEXT NOT NULL,
+    body            TEXT NOT NULL DEFAULT '',
+    devotion_id     INTEGER REFERENCES devotions(id) ON DELETE SET NULL,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE INDEX IF NOT EXISTS messages_by_conversation ON messages (conversation_id, id);
 
 CREATE TABLE IF NOT EXISTS prayers (
     id          INTEGER PRIMARY KEY,
@@ -66,13 +72,13 @@ CREATE TABLE IF NOT EXISTS prayers (
     updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- The whole list is shared, so viewers always see the live state.
+-- The whole list is shared into a chat; members read the live prayers table.
 CREATE TABLE IF NOT EXISTS prayer_list_shares (
-    id                   INTEGER PRIMARY KEY,
-    owner_id             INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    shared_with_user_id  INTEGER REFERENCES users(id) ON DELETE CASCADE,
-    shared_with_group_id INTEGER REFERENCES user_groups(id) ON DELETE CASCADE,
-    created_at           TEXT NOT NULL DEFAULT (datetime('now'))
+    id              INTEGER PRIMARY KEY,
+    owner_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (owner_id, conversation_id)
 );
 """
 
@@ -87,5 +93,10 @@ def connect():
 def init():
     DB_PATH.parent.mkdir(exist_ok=True)
     with connect() as conn:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(devotions)")}
+        if cols and "observations" not in cols:
+            raise SystemExit(
+                "data/devotion.db was made by an older version of this app.\n"
+                "Delete the data folder and start again (this erases your test accounts).")
         conn.execute("PRAGMA journal_mode = WAL")
         conn.executescript(SCHEMA)

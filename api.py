@@ -4,7 +4,6 @@ Each handler receives (conn, user, args, body, query) and returns a JSON-able va
 Raise ApiError for anything the client did wrong.
 """
 import re
-import secrets
 import sqlite3
 from datetime import date, timedelta
 
@@ -21,10 +20,15 @@ class ApiError(Exception):
 # ---------- small validators ----------
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_.]{3,30}$")
 MAX_TEXT = 20_000
+MAX_MESSAGE = 4_000
+MAX_GROUP_SIZE = 50
+DEVOTION_FIELDS = ("observations", "interpretation", "application")
 
 
 def text(body: dict, key: str, *, required=False, max_len=MAX_TEXT) -> str:
     value = body.get(key, "")
+    if value is None:
+        value = ""
     if not isinstance(value, str):
         raise ApiError(400, f"{key} must be text")
     value = value.strip()
@@ -42,33 +46,11 @@ def parse_date(value: str) -> str:
         raise ApiError(400, "Date must be YYYY-MM-DD")
 
 
-def my_group_ids(conn, user_id: int) -> list[int]:
-    return [r[0] for r in conn.execute("SELECT group_id FROM group_members WHERE user_id = ?", (user_id,))]
-
-
-def resolve_recipient(conn, user, body) -> tuple[int | None, int | None]:
-    """Turn {"username": ...} or {"group_id": ...} into (user_id, group_id)."""
-    if body.get("username"):
-        row = conn.execute("SELECT id FROM users WHERE username = ?", (str(body["username"]).strip(),)).fetchone()
-        if row is None:
-            raise ApiError(404, "No user with that username")
-        if row["id"] == user["id"]:
-            raise ApiError(400, "You can't share with yourself")
-        return row["id"], None
-    if body.get("group_id") is not None:
-        try:
-            group_id = int(body["group_id"])
-        except (TypeError, ValueError):
-            raise ApiError(400, "Invalid group")
-        if group_id not in my_group_ids(conn, user["id"]):
-            raise ApiError(403, "You can only share with groups you belong to")
-        return None, group_id
-    raise ApiError(400, "Choose a person or a group to share with")
-
-
-SHARE_LABEL_SQL = """
-    COALESCE(u.display_name || ' (@' || u.username || ')', 'Group: ' || g.name) AS label
-"""
+def parse_id(value, what="id") -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        raise ApiError(400, f"Invalid {what}")
 
 
 # ---------- accounts ----------
@@ -108,50 +90,283 @@ def me(conn, user, args, body, query):
     return user
 
 
+def search_users(conn, user, args, body, query):
+    q = query.get("q", "").strip()
+    if len(q) < 2:
+        return []
+    # Escape LIKE wildcards so searching "a_b" means a literal underscore.
+    like = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    rows = conn.execute(
+        r"""SELECT id, username, display_name FROM users
+            WHERE id != ? AND (username LIKE ? ESCAPE '\' OR display_name LIKE ? ESCAPE '\')
+            ORDER BY display_name LIMIT 20""",
+        (user["id"], like, like),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+# ---------- conversations (chats) ----------
+def require_member(conn, conv_id: int, user):
+    row = conn.execute(
+        """SELECT c.id, c.name, c.is_group FROM conversations c
+           JOIN conversation_members m ON m.conversation_id = c.id
+           WHERE c.id = ? AND m.user_id = ?""",
+        (conv_id, user["id"]),
+    ).fetchone()
+    if row is None:
+        raise ApiError(404, "Chat not found")
+    return row
+
+
+def members_of(conn, conv_id: int) -> list[dict]:
+    rows = conn.execute(
+        """SELECT u.id, u.display_name, u.username FROM conversation_members m
+           JOIN users u ON u.id = m.user_id WHERE m.conversation_id = ? ORDER BY u.display_name""",
+        (conv_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def title_for(conv, members: list[dict], user_id: int) -> str:
+    others = [m["display_name"] for m in members if m["id"] != user_id]
+    if conv["is_group"]:
+        return conv["name"] or ", ".join(others) or "Group"
+    return others[0] if others else "Chat"
+
+
+def clean_user_ids(conn, user, raw) -> list[int]:
+    if not isinstance(raw, list) or not raw:
+        raise ApiError(400, "Add at least one person")
+    ids = []
+    for value in raw:
+        uid = parse_id(value, "person")
+        if uid != user["id"] and uid not in ids:
+            ids.append(uid)
+    if not ids:
+        raise ApiError(400, "Add at least one other person")
+    if len(ids) > MAX_GROUP_SIZE:
+        raise ApiError(400, f"Groups can have at most {MAX_GROUP_SIZE} people")
+    found = conn.execute(f"SELECT COUNT(*) FROM users WHERE id IN ({','.join('?' * len(ids))})", ids).fetchone()[0]
+    if found != len(ids):
+        raise ApiError(404, "Some of those people don't exist")
+    return ids
+
+
+def post_message(conn, conv_id, sender_id, kind, body="", devotion_id=None):
+    cur = conn.execute(
+        "INSERT INTO messages (conversation_id, sender_id, kind, body, devotion_id) VALUES (?, ?, ?, ?, ?)",
+        (conv_id, sender_id, kind, body, devotion_id),
+    )
+    return cur.lastrowid
+
+
+def preview_text(row, user_id: int, is_group: bool) -> str:
+    kind = row["kind"]
+    if kind == "system":
+        return row["body"]
+    who = "You" if row["sender_id"] == user_id else row["sender"].split(" ")[0]
+    if kind == "devotion":
+        return f"{who} shared a devotion"
+    if kind == "prayer_list":
+        return f"{who} shared a prayer list"
+    return f"{who}: {row['body']}" if (is_group or who == "You") else row["body"]
+
+
+def list_conversations(conn, user, args, body, query):
+    convs = conn.execute(
+        """SELECT c.id, c.name, c.is_group, c.created_at, m.last_read_id,
+                  (SELECT MAX(id) FROM messages WHERE conversation_id = c.id) AS last_id
+           FROM conversations c
+           JOIN conversation_members m ON m.conversation_id = c.id AND m.user_id = ?""",
+        (user["id"],),
+    ).fetchall()
+    result = []
+    for c in convs:
+        members = members_of(conn, c["id"])
+        last = None
+        if c["last_id"]:
+            last = conn.execute(
+                """SELECT m.kind, m.body, m.created_at, m.sender_id, u.display_name AS sender
+                   FROM messages m JOIN users u ON u.id = m.sender_id WHERE m.id = ?""",
+                (c["last_id"],),
+            ).fetchone()
+        unread = conn.execute(
+            "SELECT COUNT(*) FROM messages WHERE conversation_id = ? AND id > ? AND sender_id != ?",
+            (c["id"], c["last_read_id"], user["id"]),
+        ).fetchone()[0]
+        result.append({
+            "id": c["id"],
+            "title": title_for(c, members, user["id"]),
+            "is_group": bool(c["is_group"]),
+            "member_count": len(members),
+            "preview": preview_text(last, user["id"], bool(c["is_group"])) if last else "",
+            "last_at": last["created_at"] if last else c["created_at"],
+            "unread": unread,
+        })
+    result.sort(key=lambda r: r["last_at"], reverse=True)
+    return result
+
+
+def create_conversation(conn, user, args, body, query):
+    ids = clean_user_ids(conn, user, body.get("user_ids"))
+    name = text(body, "name", max_len=80)
+    is_group = len(ids) > 1 or bool(name)
+
+    if not is_group:
+        # Reuse the existing 1-on-1 chat instead of making duplicates.
+        row = conn.execute(
+            """SELECT c.id FROM conversations c
+               JOIN conversation_members a ON a.conversation_id = c.id AND a.user_id = ?
+               JOIN conversation_members b ON b.conversation_id = c.id AND b.user_id = ?
+               WHERE c.is_group = 0""",
+            (user["id"], ids[0]),
+        ).fetchone()
+        if row:
+            return {"id": row["id"]}
+
+    cur = conn.execute("INSERT INTO conversations (name, is_group, created_by) VALUES (?, ?, ?)",
+                       (name or None, int(is_group), user["id"]))
+    conv_id = cur.lastrowid
+    conn.executemany("INSERT INTO conversation_members (conversation_id, user_id) VALUES (?, ?)",
+                     [(conv_id, uid) for uid in [user["id"], *ids]])
+    if is_group:
+        post_message(conn, conv_id, user["id"], "system", f"{user['display_name']} created the group")
+    return {"id": conv_id}
+
+
+def get_conversation(conn, user, args, body, query):
+    conv = require_member(conn, parse_id(args[0]), user)
+    members = members_of(conn, conv["id"])
+    return {"id": conv["id"], "title": title_for(conv, members, user["id"]),
+            "name": conv["name"], "is_group": bool(conv["is_group"]), "members": members}
+
+
+def add_members(conn, user, args, body, query):
+    conv = require_member(conn, parse_id(args[0]), user)
+    if not conv["is_group"]:
+        raise ApiError(400, "Start a new group to chat with more people")
+    current = {m["id"] for m in members_of(conn, conv["id"])}
+    new_ids = [uid for uid in clean_user_ids(conn, user, body.get("user_ids")) if uid not in current]
+    if len(current) + len(new_ids) > MAX_GROUP_SIZE:
+        raise ApiError(400, f"Groups can have at most {MAX_GROUP_SIZE} people")
+    if new_ids:
+        conn.executemany("INSERT INTO conversation_members (conversation_id, user_id) VALUES (?, ?)",
+                         [(conv["id"], uid) for uid in new_ids])
+        names = [r[0] for r in conn.execute(
+            f"SELECT display_name FROM users WHERE id IN ({','.join('?' * len(new_ids))})", new_ids)]
+        post_message(conn, conv["id"], user["id"], "system", f"{user['display_name']} added {', '.join(names)}")
+    return get_conversation(conn, user, [conv["id"]], body, query)
+
+
+def leave_conversation(conn, user, args, body, query):
+    conv = require_member(conn, parse_id(args[0]), user)
+    if not conv["is_group"]:
+        raise ApiError(400, "You can only leave group chats")
+    conn.execute("DELETE FROM conversation_members WHERE conversation_id = ? AND user_id = ?", (conv["id"], user["id"]))
+    conn.execute("DELETE FROM prayer_list_shares WHERE conversation_id = ? AND owner_id = ?", (conv["id"], user["id"]))
+    remaining = conn.execute("SELECT COUNT(*) FROM conversation_members WHERE conversation_id = ?",
+                             (conv["id"],)).fetchone()[0]
+    if remaining == 0:
+        conn.execute("DELETE FROM conversations WHERE id = ?", (conv["id"],))
+    else:
+        post_message(conn, conv["id"], user["id"], "system", f"{user['display_name']} left the group")
+    return {"ok": True}
+
+
+# ---------- messages ----------
+def format_message(r, user) -> dict:
+    msg = {"id": r["id"], "kind": r["kind"], "body": r["body"], "created_at": r["created_at"],
+           "sender": r["sender"], "mine": r["sender_id"] == user["id"]}
+    if r["kind"] == "devotion":
+        msg["devotion"] = None if r["devotion_id"] is None else {
+            "entry_date": r["entry_date"], "scripture": r["scripture"],
+            **{f: r[f] for f in DEVOTION_FIELDS}}
+    return msg
+
+
+def list_messages(conn, user, args, body, query):
+    conv = require_member(conn, parse_id(args[0]), user)
+    after = parse_id(query.get("after", 0), "after")
+    rows = conn.execute(
+        """SELECT * FROM (
+             SELECT m.id, m.kind, m.body, m.created_at, m.sender_id, u.display_name AS sender,
+                    m.devotion_id, d.entry_date, d.scripture, d.observations, d.interpretation, d.application
+             FROM messages m JOIN users u ON u.id = m.sender_id
+             LEFT JOIN devotions d ON d.id = m.devotion_id
+             WHERE m.conversation_id = ? AND m.id > ?
+             ORDER BY m.id DESC LIMIT 200
+           ) ORDER BY id""",
+        (conv["id"], after),
+    ).fetchall()
+    if rows:
+        conn.execute(
+            """UPDATE conversation_members SET last_read_id = MAX(last_read_id, ?)
+               WHERE conversation_id = ? AND user_id = ?""",
+            (rows[-1]["id"], conv["id"], user["id"]),
+        )
+    return [format_message(r, user) for r in rows]
+
+
+def send_message(conn, user, args, body, query):
+    conv = require_member(conn, parse_id(args[0]), user)
+    content = text(body, "body", required=True, max_len=MAX_MESSAGE)
+    return {"id": post_message(conn, conv["id"], user["id"], "text", content)}
+
+
+def delete_message(conn, user, args, body, query):
+    conn.execute("DELETE FROM messages WHERE id = ? AND sender_id = ? AND kind != 'system'",
+                 (parse_id(args[0]), user["id"]))
+    return {"ok": True}
+
+
 # ---------- devotions ----------
 def devotions_for_month(conn, user, args, body, query):
     month = query.get("month", "")
     if not re.fullmatch(r"\d{4}-\d{2}", month):
         raise ApiError(400, "month must be YYYY-MM")
     rows = conn.execute(
-        """SELECT entry_date, title FROM devotions
-           WHERE user_id = ? AND entry_date LIKE ? ORDER BY entry_date""",
+        "SELECT entry_date FROM devotions WHERE user_id = ? AND entry_date LIKE ? ORDER BY entry_date",
         (user["id"], month + "-%"),
     ).fetchall()
-    return [dict(r) for r in rows]
+    return [r["entry_date"] for r in rows]
 
 
 def get_devotion(conn, user, args, body, query):
     entry_date = parse_date(args[0])
     row = conn.execute(
-        "SELECT id, entry_date, title, scripture, body, updated_at FROM devotions WHERE user_id = ? AND entry_date = ?",
+        """SELECT id, entry_date, scripture, observations, interpretation, application, updated_at
+           FROM devotions WHERE user_id = ? AND entry_date = ?""",
         (user["id"], entry_date),
     ).fetchone()
     if row is None:
         return None
-    shares = conn.execute(
-        f"""SELECT s.id, {SHARE_LABEL_SQL} FROM devotion_shares s
-            LEFT JOIN users u ON u.id = s.shared_with_user_id
-            LEFT JOIN user_groups g ON g.id = s.shared_with_group_id
-            WHERE s.devotion_id = ? ORDER BY s.id""",
-        (row["id"],),
+    sent = conn.execute(
+        """SELECT m.id AS message_id, c.id, c.name, c.is_group FROM messages m
+           JOIN conversations c ON c.id = m.conversation_id
+           WHERE m.devotion_id = ? AND m.sender_id = ? ORDER BY m.id""",
+        (row["id"], user["id"]),
     ).fetchall()
-    return {**dict(row), "shares": [dict(s) for s in shares]}
+    sent_to = [{"message_id": s["message_id"], "label": title_for(s, members_of(conn, s["id"]), user["id"])}
+               for s in sent]
+    return {**dict(row), "sent_to": sent_to}
 
 
 def save_devotion(conn, user, args, body, query):
     entry_date = parse_date(args[0])
     if date.fromisoformat(entry_date) > date.today() + timedelta(days=1):
         raise ApiError(400, "Can't write a devotion for a future date")
-    title = text(body, "title", max_len=200)
     scripture = text(body, "scripture", max_len=300)
-    content = text(body, "body", required=True)
+    fields = {f: text(body, f) for f in DEVOTION_FIELDS}
+    if not any(fields.values()):
+        raise ApiError(400, "Write at least one of Observations, Interpretation or Application")
     conn.execute(
-        """INSERT INTO devotions (user_id, entry_date, title, scripture, body) VALUES (?, ?, ?, ?, ?)
+        """INSERT INTO devotions (user_id, entry_date, scripture, observations, interpretation, application)
+           VALUES (?, ?, ?, ?, ?, ?)
            ON CONFLICT (user_id, entry_date) DO UPDATE SET
-             title = excluded.title, scripture = excluded.scripture,
-             body = excluded.body, updated_at = datetime('now')""",
-        (user["id"], entry_date, title, scripture, content),
+             scripture = excluded.scripture, observations = excluded.observations,
+             interpretation = excluded.interpretation, application = excluded.application,
+             updated_at = datetime('now')""",
+        (user["id"], entry_date, scripture, *fields.values()),
     )
     return get_devotion(conn, user, [entry_date], body, query)
 
@@ -162,79 +377,15 @@ def delete_devotion(conn, user, args, body, query):
     return {"ok": True}
 
 
-def share_devotion(conn, user, args, body, query):
+def send_devotion(conn, user, args, body, query):
     entry_date = parse_date(args[0])
     row = conn.execute("SELECT id FROM devotions WHERE user_id = ? AND entry_date = ?",
                        (user["id"], entry_date)).fetchone()
     if row is None:
         raise ApiError(404, "Save the devotion before sharing it")
-    to_user, to_group = resolve_recipient(conn, user, body)
-    exists = conn.execute(
-        """SELECT 1 FROM devotion_shares WHERE devotion_id = ?
-           AND shared_with_user_id IS ? AND shared_with_group_id IS ?""",
-        (row["id"], to_user, to_group),
-    ).fetchone()
-    if not exists:
-        conn.execute("INSERT INTO devotion_shares (devotion_id, shared_with_user_id, shared_with_group_id) VALUES (?, ?, ?)",
-                     (row["id"], to_user, to_group))
+    conv = require_member(conn, parse_id(body.get("conversation_id"), "chat"), user)
+    post_message(conn, conv["id"], user["id"], "devotion", devotion_id=row["id"])
     return get_devotion(conn, user, [entry_date], body, query)
-
-
-def unshare_devotion(conn, user, args, body, query):
-    share_id = int(args[0])
-    # Only the devotion's author can remove its shares.
-    conn.execute(
-        """DELETE FROM devotion_shares WHERE id = ? AND devotion_id IN
-           (SELECT id FROM devotions WHERE user_id = ?)""",
-        (share_id, user["id"]),
-    )
-    return {"ok": True}
-
-
-def devotion_stats(conn, user, args, body, query):
-    """Streaks are computed from the client's 'today' so they're right in any time zone."""
-    today = date.fromisoformat(parse_date(query.get("today", "")))
-    dates = {date.fromisoformat(r[0]) for r in
-             conn.execute("SELECT entry_date FROM devotions WHERE user_id = ?", (user["id"],))}
-
-    # Current streak: counts back from today, or from yesterday if today isn't written yet.
-    day = today if today in dates else today - timedelta(days=1)
-    current = 0
-    while day in dates:
-        current += 1
-        day -= timedelta(days=1)
-
-    longest = run = 0
-    prev = None
-    for d in sorted(dates):
-        run = run + 1 if prev and d - prev == timedelta(days=1) else 1
-        longest = max(longest, run)
-        prev = d
-
-    last_30 = sum(1 for d in dates if today - timedelta(days=29) <= d <= today)
-    return {"current_streak": current, "longest_streak": longest,
-            "last_30_days": last_30, "total": len(dates)}
-
-
-def shared_devotions(conn, user, args, body, query):
-    groups = my_group_ids(conn, user["id"])
-    placeholders = ",".join("?" * len(groups)) or "NULL"
-    rows = conn.execute(
-        f"""SELECT d.id, d.entry_date, d.title, d.scripture, d.body, d.updated_at,
-                   a.display_name AS author, a.username AS author_username,
-                   GROUP_CONCAT(COALESCE(g.name, 'you directly'), ', ') AS via
-            FROM devotion_shares s
-            JOIN devotions d ON d.id = s.devotion_id
-            JOIN users a ON a.id = d.user_id
-            LEFT JOIN user_groups g ON g.id = s.shared_with_group_id
-            WHERE d.user_id != ?
-              AND (s.shared_with_user_id = ? OR s.shared_with_group_id IN ({placeholders}))
-            GROUP BY d.id
-            ORDER BY d.entry_date DESC, d.updated_at DESC
-            LIMIT 100""",
-        (user["id"], user["id"], *groups),
-    ).fetchall()
-    return [dict(r) for r in rows]
 
 
 # ---------- prayers ----------
@@ -255,7 +406,7 @@ def add_prayer(conn, user, args, body, query):
 
 
 def update_prayer(conn, user, args, body, query):
-    prayer_id = int(args[0])
+    prayer_id = parse_id(args[0])
     row = conn.execute("SELECT * FROM prayers WHERE id = ? AND user_id = ?", (prayer_id, user["id"])).fetchone()
     if row is None:
         raise ApiError(404, "Prayer not found")
@@ -274,50 +425,41 @@ def update_prayer(conn, user, args, body, query):
 
 
 def delete_prayer(conn, user, args, body, query):
-    conn.execute("DELETE FROM prayers WHERE id = ? AND user_id = ?", (int(args[0]), user["id"]))
+    conn.execute("DELETE FROM prayers WHERE id = ? AND user_id = ?", (parse_id(args[0]), user["id"]))
     return list_prayers(conn, user, args, body, query)
 
 
 def list_prayer_shares(conn, user, args, body, query):
     rows = conn.execute(
-        f"""SELECT s.id, {SHARE_LABEL_SQL} FROM prayer_list_shares s
-            LEFT JOIN users u ON u.id = s.shared_with_user_id
-            LEFT JOIN user_groups g ON g.id = s.shared_with_group_id
-            WHERE s.owner_id = ? ORDER BY s.id""",
+        """SELECT s.id, c.id AS conv_id, c.name, c.is_group FROM prayer_list_shares s
+           JOIN conversations c ON c.id = s.conversation_id WHERE s.owner_id = ? ORDER BY s.id""",
         (user["id"],),
     ).fetchall()
-    return [dict(r) for r in rows]
+    return [{"id": r["id"], "label": title_for(r, members_of(conn, r["conv_id"]), user["id"])} for r in rows]
 
 
 def add_prayer_share(conn, user, args, body, query):
-    to_user, to_group = resolve_recipient(conn, user, body)
-    exists = conn.execute(
-        """SELECT 1 FROM prayer_list_shares WHERE owner_id = ?
-           AND shared_with_user_id IS ? AND shared_with_group_id IS ?""",
-        (user["id"], to_user, to_group),
-    ).fetchone()
-    if not exists:
-        conn.execute("INSERT INTO prayer_list_shares (owner_id, shared_with_user_id, shared_with_group_id) VALUES (?, ?, ?)",
-                     (user["id"], to_user, to_group))
+    conv = require_member(conn, parse_id(body.get("conversation_id"), "chat"), user)
+    cur = conn.execute("INSERT OR IGNORE INTO prayer_list_shares (owner_id, conversation_id) VALUES (?, ?)",
+                       (user["id"], conv["id"]))
+    if cur.rowcount:
+        post_message(conn, conv["id"], user["id"], "prayer_list")
     return list_prayer_shares(conn, user, args, body, query)
 
 
 def remove_prayer_share(conn, user, args, body, query):
-    conn.execute("DELETE FROM prayer_list_shares WHERE id = ? AND owner_id = ?", (int(args[0]), user["id"]))
+    conn.execute("DELETE FROM prayer_list_shares WHERE id = ? AND owner_id = ?", (parse_id(args[0]), user["id"]))
     return list_prayer_shares(conn, user, args, body, query)
 
 
 def shared_prayer_lists(conn, user, args, body, query):
-    """Read live from the prayers table, so viewers always see the current list."""
-    groups = my_group_ids(conn, user["id"])
-    placeholders = ",".join("?" * len(groups)) or "NULL"
+    """Lists shared into any chat I'm in. Read live, so viewers always see the current list."""
     owners = conn.execute(
-        f"""SELECT DISTINCT u.id, u.display_name, u.username FROM prayer_list_shares s
-            JOIN users u ON u.id = s.owner_id
-            WHERE s.owner_id != ?
-              AND (s.shared_with_user_id = ? OR s.shared_with_group_id IN ({placeholders}))
-            ORDER BY u.display_name""",
-        (user["id"], user["id"], *groups),
+        """SELECT DISTINCT u.id, u.display_name, u.username FROM prayer_list_shares s
+           JOIN conversation_members m ON m.conversation_id = s.conversation_id AND m.user_id = ?
+           JOIN users u ON u.id = s.owner_id
+           WHERE s.owner_id != ? ORDER BY u.display_name""",
+        (user["id"], user["id"]),
     ).fetchall()
     result = []
     for owner in owners:
@@ -331,75 +473,36 @@ def shared_prayer_lists(conn, user, args, body, query):
     return result
 
 
-# ---------- groups ----------
-def list_groups(conn, user, args, body, query):
-    groups = conn.execute(
-        """SELECT g.id, g.name, g.invite_code, g.owner_id = ? AS is_owner FROM user_groups g
-           JOIN group_members m ON m.group_id = g.id WHERE m.user_id = ? ORDER BY g.name""",
-        (user["id"], user["id"]),
-    ).fetchall()
-    result = []
-    for g in groups:
-        members = conn.execute(
-            """SELECT u.display_name, u.username FROM group_members m JOIN users u ON u.id = m.user_id
-               WHERE m.group_id = ? ORDER BY u.display_name""",
-            (g["id"],),
-        ).fetchall()
-        result.append({**dict(g), "is_owner": bool(g["is_owner"]), "members": [dict(m) for m in members]})
-    return result
-
-
-def create_group(conn, user, args, body, query):
-    name = text(body, "name", required=True, max_len=80)
-    code = secrets.token_urlsafe(6)
-    cur = conn.execute("INSERT INTO user_groups (name, invite_code, owner_id) VALUES (?, ?, ?)",
-                       (name, code, user["id"]))
-    conn.execute("INSERT INTO group_members (group_id, user_id) VALUES (?, ?)", (cur.lastrowid, user["id"]))
-    return list_groups(conn, user, args, body, query)
-
-
-def join_group(conn, user, args, body, query):
-    code = text(body, "code", required=True, max_len=40)
-    row = conn.execute("SELECT id FROM user_groups WHERE invite_code = ?", (code,)).fetchone()
-    if row is None:
-        raise ApiError(404, "No group with that invite code")
-    conn.execute("INSERT OR IGNORE INTO group_members (group_id, user_id) VALUES (?, ?)", (row["id"], user["id"]))
-    return list_groups(conn, user, args, body, query)
-
-
-def leave_group(conn, user, args, body, query):
-    conn.execute("DELETE FROM group_members WHERE group_id = ? AND user_id = ?", (int(args[0]), user["id"]))
-    return list_groups(conn, user, args, body, query)
-
-
 # ---------- routing table: (method, path regex, handler, login required) ----------
 ROUTES = [
-    ("POST",   r"/api/register",                   register,            False),
-    ("POST",   r"/api/login",                      login,               False),
-    ("POST",   r"/api/logout",                     logout,              False),
-    ("GET",    r"/api/me",                         me,                  True),
+    ("POST",   r"/api/register",                         register,             False),
+    ("POST",   r"/api/login",                            login,                False),
+    ("POST",   r"/api/logout",                           logout,               False),
+    ("GET",    r"/api/me",                               me,                   True),
+    ("GET",    r"/api/users/search",                     search_users,         True),
 
-    ("GET",    r"/api/devotions",                  devotions_for_month, True),
-    ("GET",    r"/api/devotions/stats",            devotion_stats,      True),
-    ("GET",    r"/api/devotions/shared",           shared_devotions,    True),
-    ("GET",    r"/api/devotions/([\d-]+)",         get_devotion,        True),
-    ("PUT",    r"/api/devotions/([\d-]+)",         save_devotion,       True),
-    ("DELETE", r"/api/devotions/([\d-]+)",         delete_devotion,     True),
-    ("POST",   r"/api/devotions/([\d-]+)/shares",  share_devotion,      True),
-    ("DELETE", r"/api/devotion-shares/(\d+)",      unshare_devotion,    True),
+    ("GET",    r"/api/conversations",                    list_conversations,   True),
+    ("POST",   r"/api/conversations",                    create_conversation,  True),
+    ("GET",    r"/api/conversations/(\d+)",              get_conversation,     True),
+    ("POST",   r"/api/conversations/(\d+)/members",      add_members,          True),
+    ("POST",   r"/api/conversations/(\d+)/leave",        leave_conversation,   True),
+    ("GET",    r"/api/conversations/(\d+)/messages",     list_messages,        True),
+    ("POST",   r"/api/conversations/(\d+)/messages",     send_message,         True),
+    ("DELETE", r"/api/messages/(\d+)",                   delete_message,       True),
 
-    ("GET",    r"/api/prayers",                    list_prayers,        True),
-    ("POST",   r"/api/prayers",                    add_prayer,          True),
-    ("GET",    r"/api/prayers/shared",             shared_prayer_lists, True),
-    ("PATCH",  r"/api/prayers/(\d+)",              update_prayer,       True),
-    ("DELETE", r"/api/prayers/(\d+)",              delete_prayer,       True),
-    ("GET",    r"/api/prayer-shares",              list_prayer_shares,  True),
-    ("POST",   r"/api/prayer-shares",              add_prayer_share,    True),
-    ("DELETE", r"/api/prayer-shares/(\d+)",        remove_prayer_share, True),
+    ("GET",    r"/api/devotions",                        devotions_for_month,  True),
+    ("GET",    r"/api/devotions/([\d-]+)",               get_devotion,         True),
+    ("PUT",    r"/api/devotions/([\d-]+)",               save_devotion,        True),
+    ("DELETE", r"/api/devotions/([\d-]+)",               delete_devotion,      True),
+    ("POST",   r"/api/devotions/([\d-]+)/send",          send_devotion,        True),
 
-    ("GET",    r"/api/groups",                     list_groups,         True),
-    ("POST",   r"/api/groups",                     create_group,        True),
-    ("POST",   r"/api/groups/join",                join_group,          True),
-    ("POST",   r"/api/groups/(\d+)/leave",         leave_group,         True),
+    ("GET",    r"/api/prayers",                          list_prayers,         True),
+    ("POST",   r"/api/prayers",                          add_prayer,           True),
+    ("GET",    r"/api/prayers/shared",                   shared_prayer_lists,  True),
+    ("PATCH",  r"/api/prayers/(\d+)",                    update_prayer,        True),
+    ("DELETE", r"/api/prayers/(\d+)",                    delete_prayer,        True),
+    ("GET",    r"/api/prayer-shares",                    list_prayer_shares,   True),
+    ("POST",   r"/api/prayer-shares",                    add_prayer_share,     True),
+    ("DELETE", r"/api/prayer-shares/(\d+)",              remove_prayer_share,  True),
 ]
 ROUTES = [(m, re.compile(p + "$"), h, a) for m, p, h, a in ROUTES]

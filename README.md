@@ -32,13 +32,15 @@ browser ──fetch JSON──▶ server.py ──▶ api.py ──▶ db.py (SQ
 ## Data model
 
 - **users**, **sessions**
-- **user_groups** + **group_members** — join by invite code
-- **devotions** — one per user per day (`UNIQUE(user_id, entry_date)`); `entry_date` is the writer's *local* date so travel across time zones doesn't break streaks
-- **devotion_shares** — each devotion shared individually, to a user *or* a group
-- **prayers** — `answered_at` NULL means still praying
-- **prayer_list_shares** — the *whole list* is shared, so viewers always read the live table (the Prayer list page re-fetches every 30s and when the tab regains focus)
+- **conversations** + **conversation_members**: chats. `is_group = 0` is a 1-on-1 chat (reused, never duplicated); groups can add people and be left. `last_read_id` drives unread badges.
+- **messages**: `kind` is `text`, `devotion`, `prayer_list` or `system` ("Ben added Grace"). A devotion message points at the live devotion, so edits show up in the chat, and deleting the devotion leaves a "deleted" placeholder.
+- **devotions**: one per user per day, with Scripture + Observations / Interpretation / Application. `entry_date` is the writer's *local* date, so travelling doesn't shift days.
+- **prayers**: `answered_at` NULL means still praying.
+- **prayer_list_shares**: your *whole list* shared into a chat; everyone in that chat reads the live list.
 
-Group visibility is checked at read time: leave a group and its shared content disappears for you.
+Access is checked on every request: you only see chats you're a member of. Leave a group and its messages and shared prayer lists disappear for you.
+
+Chats update by polling (open chat every 4s, chat list every 10s). That's simple and fine for small groups; WebSockets would be the upgrade later.
 
 ## Security choices worth knowing
 
@@ -57,7 +59,7 @@ Group visibility is checked at read time: leave a group and its shared content d
 
 - Login rate limiting (do it in Nginx with `limit_req`, or a small counter table)
 - Password reset (needs email)
-- Notifications when someone shares with you / a prayer is answered
-- Comments or "I prayed for this" on shared prayers
-- Group admin tools (remove member, rotate invite code)
+- Push/email notifications for new messages
+- "I prayed for this" reactions on prayers and devotions
+- Group admin tools (rename, remove member)
 - Expired-session cleanup job
