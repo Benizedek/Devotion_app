@@ -1,0 +1,38 @@
+/* Design tokens: colors, fonts, radius, plus dark mode and the color themes.
+   Every other file uses these var(--name) values instead of hard-coded colors. */
+
+:root {
+  --bg: #f7f3ec;
+  --surface: #fffdf9;
+  --ink: #2a2622;
+  --muted: #6f665c;
+  --line: #e4dccf;
+  --accent: #7a5c3e;
+  --accent-ink: #fffdf9;
+  --accent-soft: #efe4d4;
+  --done: #4f7a5a;
+  --danger: #a24a3c;
+  --radius: 10px;
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1b1916; --surface: #24211d; --ink: #ece6dc; --muted: #a59b8e;
+    --line: #3a352e; --accent: #c9a77f; --accent-ink: #1b1916; --accent-soft: #3a3127;
+    --done: #8fbf98; --danger: #e08a7a;
+  }
+}
+/* ---------- color themes ----------
+   Each theme overrides the accent colors (and a hint of background) in light and dark mode.
+   "warm" is the default defined at the top of this file. */
+:root[data-theme="sage"]  { --accent: #4f7a5a; --accent-soft: #e2ece3; --bg: #f3f6f1; --line: #dbe3d8; }
+:root[data-theme="ocean"] { --accent: #2f6690; --accent-soft: #dde9f3; --bg: #f2f5f8; --line: #d7e0e8; }
+:root[data-theme="plum"]  { --accent: #7b4b78; --accent-soft: #efe2ee; --bg: #f7f2f6; --line: #e5d8e3; }
+:root[data-theme="slate"] { --accent: #44505e; --accent-soft: #e4e8ec; --bg: #f4f5f7; --line: #dcdfe4; }
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="sage"]  { --accent: #8fbf98; --accent-soft: #2a3a2d; --bg: #161b17; --line: #33402f; }
+  :root[data-theme="ocean"] { --accent: #84b6dd; --accent-soft: #233545; --bg: #141a20; --line: #2f3d4a; }
+  :root[data-theme="plum"]  { --accent: #cf9ccb; --accent-soft: #3b2a3a; --bg: #1c161b; --line: #423441; }
+  :root[data-theme="slate"] { --accent: #a9b6c4; --accent-soft: #2c333b; --bg: #17191c; --line: #353a41; }
+}

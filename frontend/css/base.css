@@ -1,0 +1,26 @@
+/* Element defaults and small utility classes used everywhere. */
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.55 var(--sans); }
+h1, h2, h3 { font-family: var(--serif); font-weight: 600; line-height: 1.25; margin: 0 0 .5em; }
+h1 { font-size: 1.7rem; } h2 { font-size: 1.25rem; } h3 { font-size: 1.05rem; }
+a { color: var(--accent); }
+.muted { color: var(--muted); font-size: .92rem; }
+.hidden { display: none !important; }
+.center { text-align: center; }
+/* ---------- forms ---------- */
+label { display: block; font-size: .9rem; color: var(--muted); margin-bottom: .25rem; }
+input, textarea, select { width: 100%; font: inherit; color: var(--ink); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 8px; padding: .55rem .7rem; }
+textarea { min-height: 220px; resize: vertical; font-family: var(--serif); font-size: 1.05rem; line-height: 1.6; }
+input:focus, textarea:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+button { font: inherit; border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+  border-radius: 8px; padding: .5rem .9rem; cursor: pointer; }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+button.danger { color: var(--danger); }
+button.link { border: none; background: none; padding: 0; color: var(--accent); text-decoration: underline; }
+button:disabled { opacity: .5; cursor: default; }
+.row input, .row select { width: auto; flex: 1; min-width: 140px; }
+.error { color: var(--danger); font-size: .9rem; min-height: 1.2em; }
+.small { font-size: .82rem; }
+.stack-tight > * + * { margin-top: .4rem; }

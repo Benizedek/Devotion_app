@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Settings · Daily Bread</title>
+  <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+  <main class="narrow stack">
+    <h1>Settings</h1>
+    <section class="card stack">
+      <div>
+        <h2>Color</h2>
+        <p class="muted small">Saved to your account, so it follows you to every device.</p>
+      </div>
+      <div class="theme-grid" id="themes" role="radiogroup" aria-label="Color theme"></div>
+    </section>
+    <section class="card">
+      <div class="setting plain">
+        <div class="setting-label">
+          <strong>Fill the entire page</strong>
+          <span class="muted small">Use the full width of your screen instead of a centered column.</span>
+        </div>
+        <span id="width-switch"></span>
+      </div>
+    </section>
+    <p class="muted small">Looking for who can see your devotions and prayers? That's under <a href="/permissions">Permissions</a>.</p>
+  </main>
+  <script type="module" src="/static/js/pages/settings.js"></script>
+</body>
+</html>

@@ -12,22 +12,51 @@ Open http://127.0.0.1:8000, create an account, and you're in. The database is cr
 
 Needs Python 3.11+ (uses `Path.is_relative_to`, `str.removeprefix`, `X | None` types).
 
-## How the pieces fit
+## Run the tests
 
 ```
-browser ──fetch JSON──▶ server.py ──▶ api.py ──▶ db.py (SQLite)
-   ▲                       │            │
-   └── static/*.html/js ◀──┘          auth.py (passwords + sessions)
+python -m unittest
+```
+Run it from the project folder. Each test file starts the real server on a throwaway database, so your `data/` is never touched. Run the tests after every change, before you push.
+
+## Project layout
+
+```
+server.py                  start here: `python server.py`
+app/                       backend (Python standard library only)
+  config.py                settings from environment variables (HOST, PORT, DEVOTION_DB, ...)
+  server.py                HTTP plumbing: JSON in/out, cookies, static files, security headers
+  router.py                gathers every feature's ROUTES and finds the handler for a request
+  auth.py                  password hashing + login sessions
+  db/
+    schema.sql             the tables (structure only, no logic)
+    migrations.py          upgrades older database files in place
+    __init__.py            connect() and init()
+  api/                     business logic, one module per feature
+    accounts.py            sign-up, login, preferences, people search
+    chats.py               chats and their members
+    messages.py            messages inside a chat
+    sharing.py             per-chat devotion / prayer switches, Permissions page
+    devotions.py           your devotions (only today is editable)
+    prayers.py             your prayer list + lists shared with you
+    people.py              someone else's page, limited to what they share
+    chat_store.py          helpers shared by chats / messages / sharing
+    validation.py          input checks and ApiError
+frontend/                  everything the browser loads (served at /static/)
+  pages/                   one HTML file per page
+  css/                     app.css imports: tokens, base, layout, components, chat, pages
+  js/lib/                  shared modules: api, dom, dates, prefs, header, widgets
+  js/pages/                one script per page, importing what it needs from js/lib/
+tests/                     one test file per feature, plus security and migrations
 ```
 
-| File | Job |
-|---|---|
-| `server.py` | HTTP plumbing: routing, JSON in/out, cookies, static files, security headers. No business rules. |
-| `api.py` | **All business logic.** Every endpoint is one function; `ROUTES` at the bottom is the full API map. |
-| `auth.py` | PBKDF2-SHA256 password hashing (600k iterations), random session tokens stored only as SHA-256 hashes, 30-day cookies. |
-| `db.py` | Schema only — tables and constraints, no triggers or logic. |
-| `static/common.js` | `api()` fetch wrapper, `el()` safe DOM builder, nav header, reusable share control. |
-| `static/<page>.js` | One script per page. |
+**How a request flows:** the browser calls `/api/...` → `app/server.py` reads the JSON and the session cookie → `app/router.py` picks the handler → the handler in `app/api/<feature>.py` checks the rules and queries SQLite → JSON goes back.
+
+**Which way imports go:** `validation` ← `chat_store` ← `chats` ← `sharing` ← `devotions` ← `messages` / `people`, and `prayers` ← `people`. Nothing imports "upward", so there are no import loops. If you need something from a module further along that chain, move it down into a shared helper instead.
+
+**Adding an endpoint:** write the handler in the feature module, add a row to that module's `ROUTES`, and add a test in `tests/test_<feature>.py`.
+
+**Adding a page:** create `frontend/pages/<name>.html` and `frontend/js/pages/<name>.js`, and add its URL to `PAGES` in `app/server.py`.
 
 ## Data model
 
@@ -36,7 +65,7 @@ browser ──fetch JSON──▶ server.py ──▶ api.py ──▶ db.py (SQ
 - **conversation_members.share_devotions / share_prayers**: two independent per-chat permissions, set in a chat's Settings or on the Permissions page.
   - Devotions on: that chat's members can open your page (`/person?u=you`) to see your calendar and any devotion, and each day's devotion is posted into the chat on its first save. Off: your devotion cards in that chat are hidden.
   - Prayers on: your *active* prayers appear in their "Praying for others" and on your page.
-  - `api.can_see()` is the single rule for "may this viewer see that person's X?": true if the owner shares X with any chat the viewer is also in.
+  - `can_see()` in `app/api/people.py` is the single rule for "may this viewer see that person's X?": true if the owner shares X with any chat the viewer is also in.
 - **messages**: `kind` is `text`, `devotion` or `system` ("Ben added Grace"). A devotion message points at the live devotion, so edits show up in the chat.
 - **devotions**: one per user per day, with Scripture + Observations / Interpretation / Application. Only *today's* devotion can be saved or deleted (checked in `require_editable`); past days are read-only. `entry_date` is the writer's *local* date, so travelling doesn't shift days.
 - **prayers**: `answered_at` NULL means still praying. Answered prayers move to your private archive (`/prayers/answered`) and are never shown to others.
@@ -44,7 +73,7 @@ browser ──fetch JSON──▶ server.py ──▶ api.py ──▶ db.py (SQ
 
 Access is checked on every request: you only see chats you're a member of.
 
-**Upgrading the database:** `db.migrate()` upgrades an existing `data/devotion.db` in place and records the version in `PRAGMA user_version`. When you change the schema, add a step there instead of deleting the data folder.
+**Upgrading the database:** `app/db/migrations.py` upgrades an existing `data/devotion.db` in place and records the version in `PRAGMA user_version`. When you change `schema.sql` in a way that affects existing tables, bump `SCHEMA_VERSION` and add a step there instead of deleting the data folder.
 
 Chats update by polling (open chat every 4s, chat list every 10s). That's simple and fine for small groups; WebSockets would be the upgrade later.
 
@@ -53,7 +82,7 @@ Chats update by polling (open chat every 4s, chat list every 10s). That's simple
 - **XSS:** the frontend never uses `innerHTML`; all user text goes through `textContent` via `el()`. A strict CSP (`default-src 'self'`) also blocks inline scripts/styles.
 - **CSRF:** cookies are `SameSite=Lax` *and* every write must be `Content-Type: application/json`, which a cross-site HTML form can't send.
 - **Login timing:** a missing username still runs a full password hash, so attackers can't tell which usernames exist by response time.
-- **Path traversal:** static paths are resolved and must stay inside `static/`.
+- **Path traversal:** static paths are resolved and must stay inside `frontend/`.
 
 ## Deploying (Vultr + Nginx + Cloudflare)
 
@@ -67,5 +96,5 @@ Chats update by polling (open chat every 4s, chat list every 10s). That's simple
 - Password reset (needs email)
 - Push/email notifications for new messages
 - "I prayed for this" reactions on prayers and devotions
-- Group admin tools (rename, remove member)
+- Group admin tools (rename a group)
 - Expired-session cleanup job

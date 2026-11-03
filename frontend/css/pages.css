@@ -1,0 +1,23 @@
+/* Styles used by a single page (login, settings, permissions, prayers). */
+
+.auth { max-width: 380px; margin: 8vh auto; }
+.auth h1 { text-align: center; }
+/* ---------- settings page ---------- */
+.theme-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: .6rem; }
+.theme-option { display: flex; align-items: center; gap: .55rem; padding: .6rem .7rem; }
+.theme-option.selected { outline: 2px solid var(--accent); outline-offset: 1px; font-weight: 600; }
+.swatch { width: 20px; height: 20px; border-radius: 50%; flex: none; border: 1px solid rgba(0,0,0,.1); }
+[data-swatch="warm"] .swatch  { background: #7a5c3e; }
+[data-swatch="sage"] .swatch  { background: #4f7a5a; }
+[data-swatch="ocean"] .swatch { background: #2f6690; }
+[data-swatch="plum"] .swatch  { background: #7b4b78; }
+[data-swatch="slate"] .swatch { background: #44505e; }
+.setting.plain { border: none; padding: 0; background: none; }
+/* ---------- permissions table ---------- */
+.perm-table { width: 100%; border-collapse: collapse; }
+.perm-table th, .perm-table td { padding: .7rem .4rem; border-top: 1px solid var(--line); text-align: left; vertical-align: middle; }
+.perm-table thead th { border-top: none; color: var(--muted); font-size: .85rem; font-weight: 500; }
+.perm-table td { width: 1%; white-space: nowrap; text-align: center; }
+.perm-table thead th:not(:first-child) { text-align: center; }
+.perm-table th[scope="row"] { font-weight: 500; }
+.card-head select { width: auto; max-width: 55%; }

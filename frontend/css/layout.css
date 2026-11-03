@@ -1,0 +1,39 @@
+/* Page frame: top bar, profile menu, main column, cards, grids, full-width mode. */
+
+/* ---------- layout ---------- */
+.topbar { display: flex; align-items: center; gap: 1rem; padding: .75rem 1rem; border-bottom: 1px solid var(--line);
+          background: var(--surface); position: sticky; top: 0; z-index: 5; flex-wrap: wrap; }
+.brand { font-family: var(--serif); font-size: 1.15rem; font-weight: 600; color: var(--ink); text-decoration: none; }
+.nav { display: flex; gap: .25rem; flex-wrap: wrap; flex: 1; }
+.nav a { padding: .35rem .7rem; border-radius: 999px; text-decoration: none; color: var(--muted); }
+.nav a.active { background: var(--accent-soft); color: var(--ink); }
+.profile { position: relative; }
+.profile-btn { border-radius: 999px; padding: .4rem .9rem; }
+.menu { position: absolute; right: 0; top: calc(100% + 6px); min-width: 200px; background: var(--surface);
+  border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 8px 24px rgba(0,0,0,.12);
+  padding: .35rem; z-index: 20; display: flex; flex-direction: column; }
+.menu a, .menu button { display: block; width: 100%; text-align: left; padding: .5rem .7rem; border: none;
+  background: none; border-radius: 6px; color: var(--ink); text-decoration: none; font: inherit; cursor: pointer; }
+.menu a:hover, .menu button:hover, .menu a:focus-visible, .menu button:focus-visible { background: var(--accent-soft); }
+.menu hr { border: none; border-top: 1px solid var(--line); margin: .3rem 0; }
+.menu-who { display: flex; flex-direction: column; padding: .4rem .7rem .5rem; }
+@media (max-width: 640px) {
+  .topbar { gap: .5rem; }
+  .profile { margin-left: auto; }
+  .nav { order: 3; flex: 1 0 100%; flex-wrap: nowrap; overflow-x: auto; }
+  .nav a { white-space: nowrap; }
+}
+main { max-width: 1000px; margin: 0 auto; padding: 1.5rem 1rem 4rem; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 1.25rem; }
+.stack > * + * { margin-top: 1rem; }
+.row { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
+.grid-2 { display: grid; gap: 1.25rem; grid-template-columns: 1fr; }
+@media (min-width: 820px) { .grid-2 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+main.narrow { max-width: 760px; }
+/* ---------- card header with an action on the right ---------- */
+.card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: .75rem; }
+.card-head h2, .card-head h3 { margin: 0; }
+/* ---------- full width ---------- */
+:root[data-width="full"] main,
+:root[data-width="full"] main.narrow,
+:root[data-width="full"] main.chat-main { max-width: none; }

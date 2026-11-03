@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Prayer list · Daily Bread</title>
+  <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+  <main>
+    <div class="grid-2">
+      <div class="stack">
+        <section class="card stack">
+          <h2>Add a prayer</h2>
+          <form id="add-form" class="stack">
+            <div>
+              <label for="new-title">Prayer request</label>
+              <input id="new-title" maxlength="200" required placeholder="e.g. Mom's surgery on Friday">
+            </div>
+            <div>
+              <label for="new-body">Details (optional)</label>
+              <input id="new-body" maxlength="5000">
+            </div>
+            <div class="error" id="add-error"></div>
+            <button class="primary" type="submit">Add prayer</button>
+          </form>
+        </section>
+
+        <section class="card stack">
+          <div class="card-head">
+            <h2>My prayers</h2>
+            <a class="button-link" href="/prayers/answered" id="answered-link">Answered</a>
+          </div>
+          <ul class="list" id="my-prayers"></ul>
+        </section>
+      </div>
+
+      <section class="card stack">
+        <div class="card-head">
+          <h2>Praying for others</h2>
+          <select id="filter" aria-label="Show prayers from"></select>
+        </div>
+        <p class="muted small" id="refreshed"></p>
+        <div id="shared-lists" class="stack"></div>
+      </section>
+    </div>
+  </main>
+  <script type="module" src="/static/js/pages/prayers.js"></script>
+</body>
+</html>

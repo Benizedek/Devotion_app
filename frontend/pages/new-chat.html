@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Groups · Daily Bread</title>
+  <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+  <main class="narrow stack">
+    <div>
+      <h1 id="heading">New chat</h1>
+      <p class="muted" id="sub">Pick one person for a private chat, or several to start a group.</p>
+    </div>
+    <section class="card stack">
+      <div>
+        <label for="search">Find people</label>
+        <input id="search" placeholder="Search by name or username" autocomplete="off">
+      </div>
+      <div class="row" id="selected"></div>
+      <ul class="list" id="results"></ul>
+      <div id="name-row" class="hidden">
+        <label for="group-name">Group name (optional)</label>
+        <input id="group-name" maxlength="80" placeholder="e.g. Tuesday Bible Study">
+      </div>
+      <div class="error" id="error"></div>
+      <div class="row">
+        <button class="primary" id="go" disabled>Start chat</button>
+        <a href="/chat" class="muted">Cancel</a>
+      </div>
+    </section>
+  </main>
+  <script type="module" src="/static/js/pages/new-chat.js"></script>
+</body>
+</html>
